@@ -4,17 +4,21 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 import json
+from pathlib import Path
+import re
 import shutil
 import subprocess
 from typing import Any, Dict, List, Optional, Union
+import yaml
 
-from app.config import DATA_DIR, ensure_directories, settings
+from app.config import DATA_DIR, ROOT_DIR, ensure_directories, settings
 from app.schemas.blueprint import (
     AgentArchitecture,
     CompilationResult,
     CompiledFile,
     HarnessType,
     OrchestratorSpec,
+    SkillSpec,
     SubagentSpec,
 )
 
@@ -217,6 +221,150 @@ def sync_models_from_installed_clis() -> Dict[str, Any]:
             pass
 
     return save_harness_models_config(cfg["tier_map"], native)
+
+
+_IGNORED_SKILL_DIRS = {".git", "__pycache__", "node_modules", ".venv", ".pytest_cache"}
+
+
+def _parse_skill_frontmatter(raw_md: str) -> tuple[Dict[str, Any], str]:
+    """Extract YAML frontmatter (if present) and markdown body from a SKILL.md file."""
+    m = re.match(r"^---\s*\r?\n([\s\S]*?)\r?\n---\s*\r?\n?([\s\S]*)$", raw_md)
+    if not m:
+        return {}, raw_md
+    try:
+        meta = yaml.safe_load(m.group(1)) or {}
+        if not isinstance(meta, dict):
+            meta = {}
+    except Exception:
+        meta = {}
+    return meta, m.group(2)
+
+
+def resolve_skill_source_dir(source_dir: str) -> Optional[Path]:
+    raw = (source_dir or "").strip()
+    if not raw:
+        return None
+    cand = Path(raw)
+    resolved = cand.resolve() if cand.is_absolute() else (ROOT_DIR / cand).resolve()
+    return resolved if resolved.exists() and resolved.is_dir() else None
+
+
+def inspect_skill_directory(source_dir: str) -> Dict[str, Any]:
+    """Inspect a local skill folder containing SKILL.md + references/, scripts/, assets/, resources/."""
+    resolved = resolve_skill_source_dir(source_dir)
+    if not resolved:
+        raise ValueError(f"Skill folder '{source_dir}' does not exist or is not a directory")
+
+    skill_md_path = resolved / "SKILL.md"
+    meta: Dict[str, Any] = {}
+    body = ""
+    if skill_md_path.exists():
+        meta, body = _parse_skill_frontmatter(skill_md_path.read_text(encoding="utf-8", errors="replace"))
+
+    discovered_files: List[str] = []
+    counts = {"references": 0, "scripts": 0, "assets": 0, "resources": 0, "other": 0}
+    for fpath in sorted(resolved.rglob("*")):
+        if not fpath.is_file():
+            continue
+        rel_parts = fpath.relative_to(resolved).parts
+        if any(p in _IGNORED_SKILL_DIRS for p in rel_parts):
+            continue
+        rel_posix = "/".join(rel_parts)
+        discovered_files.append(rel_posix)
+        if rel_posix.lower() == "skill.md":
+            continue
+        top = rel_parts[0].lower() if len(rel_parts) > 1 else "other"
+        if top in counts:
+            counts[top] += 1
+        else:
+            counts["other"] += 1
+
+    skill_slug = str(meta.get("name") or resolved.name).strip().lower().replace(" ", "-")
+    skill_title = str(meta.get("title") or meta.get("name") or resolved.name).replace("-", " ").title()
+    skill_desc = str(meta.get("description") or f"Folder-backed skill loaded from {resolved.name}").strip()
+
+    return {
+        "source_dir": str(resolved).replace("\\", "/"),
+        "has_skill_md": skill_md_path.exists(),
+        "id": skill_slug,
+        "name": skill_title,
+        "description": skill_desc,
+        "instructions_preview": body.strip()[:6000],
+        "files": discovered_files,
+        "counts": counts,
+    }
+
+
+def load_skill_bundle_files(sk: SkillSpec, target_skill_root: str) -> tuple[List[CompiledFile], str]:
+    """Compile a SkillSpec into one or more CompiledFiles (including references/, scripts/, resources/, assets/ if source_dir is set)."""
+    root = target_skill_root.rstrip("/")
+    resolved = resolve_skill_source_dir(sk.source_dir or "")
+    compiled: List[CompiledFile] = []
+
+    if resolved:
+        has_skill_md = False
+        effective_body = sk.instructions or ""
+        for fpath in sorted(resolved.rglob("*")):
+            if not fpath.is_file():
+                continue
+            rel_parts = fpath.relative_to(resolved).parts
+            if any(p in _IGNORED_SKILL_DIRS for p in rel_parts):
+                continue
+            rel_posix = "/".join(rel_parts)
+            try:
+                text_content = fpath.read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                continue
+            if rel_posix.lower() == "skill.md":
+                has_skill_md = True
+                _, parsed_body = _parse_skill_frontmatter(text_content)
+                if parsed_body.strip():
+                    effective_body = parsed_body
+            is_exec = rel_parts[0].lower() == "scripts" or fpath.suffix.lower() in (".sh", ".py", ".ps1")
+            compiled.append(
+                CompiledFile(
+                    relative_path=f"{root}/{rel_posix}",
+                    content=text_content,
+                    description=f"Bundled skill file `{rel_posix}` for skill `{sk.id}`",
+                    executable=is_exec,
+                )
+            )
+        if not has_skill_md:
+            fallback_md = (
+                "---\n"
+                f"name: {sk.id}\n"
+                f"description: {json.dumps(sk.description)}\n"
+                "---\n\n"
+                f"# {sk.name}\n\n"
+                f"{effective_body.strip()}\n"
+            )
+            compiled.insert(
+                0,
+                CompiledFile(
+                    relative_path=f"{root}/SKILL.md",
+                    content=fallback_md,
+                    description=f"Skill definition `SKILL.md` for `{sk.id}`",
+                ),
+            )
+        return compiled, effective_body
+
+    # Standard inline skill (single SKILL.md)
+    skill_md = (
+        "---\n"
+        f"name: {sk.id}\n"
+        f"description: {json.dumps(sk.description)}\n"
+        "---\n\n"
+        f"# {sk.name}\n\n"
+        f"{sk.instructions.strip()}\n"
+    )
+    compiled.append(
+        CompiledFile(
+            relative_path=f"{root}/SKILL.md",
+            content=skill_md,
+            description=f"Skill definition for `{sk.id}`",
+        )
+    )
+    return compiled, sk.instructions
 
 
 class HarnessAdapter(ABC):

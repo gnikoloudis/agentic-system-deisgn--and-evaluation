@@ -85,7 +85,11 @@ class SkillSpec(BaseModel):
     id: str = Field(..., description="Skill or slash command slug")
     name: str = Field(..., description="Human-readable skill name")
     description: str = Field(..., description="When the agent should invoke or apply this skill")
-    instructions: str = Field(..., description="Markdown body of the skill / command")
+    instructions: str = Field(default="", description="Markdown body of the skill / command (auto-loaded from SKILL.md if source_dir is set)")
+    source_dir: Optional[str] = Field(
+        default=None,
+        description="Optional path to a local skill folder containing SKILL.md plus references/, scripts/, resources/, and assets/",
+    )
     trigger_command: Optional[str] = Field(
         default=None,
         description="Optional slash command trigger (e.g. '/tdd-check')",

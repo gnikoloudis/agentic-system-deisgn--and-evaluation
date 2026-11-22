@@ -48,6 +48,20 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  inspectSkillDir: (sourceDir: string) =>
+    request<{
+      source_dir: string;
+      has_skill_md: boolean;
+      id: string;
+      name: string;
+      description: string;
+      instructions_preview: string;
+      files: string[];
+      counts: { references: number; scripts: number; assets: number; resources: number; other: number };
+    }>("/blueprints/inspect-skill-dir", {
+      method: "POST",
+      body: JSON.stringify({ source_dir: sourceDir }),
+    }),
   compilePreview: (architectureId: string, harness: HarnessType) =>
     request<CompilationResult>(`/blueprints/${architectureId}/compile/${harness}`),
   exportBlueprint: (

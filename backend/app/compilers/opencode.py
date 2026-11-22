@@ -121,13 +121,24 @@ class OpenCodeAdapter(HarnessAdapter):
                 },
             }
 
-        # 3. Commands / Skills -> .opencode/command/<id>.md + built-in /evaluate-project command
+        # 3. Skills & Commands -> .opencode/skills/<id>/** (including references/scripts/assets) + .opencode/command/<id>.md
+        from app.compilers.base import load_skill_bundle_files
+
         for sk in blueprint.skills:
+            bundle_files, effective_body = load_skill_bundle_files(sk, f".opencode/skills/{sk.id}")
+            files.extend(bundle_files)
+            ref_hint = ""
+            if len(bundle_files) > 1:
+                ref_hint = (
+                    f"\n> Skill bundle installed at `.opencode/skills/{sk.id}/` "
+                    f"({len(bundle_files) - 1} supporting reference/script/asset file(s) available relative to that folder).\n\n"
+                )
             cmd_md = (
                 "---\n"
                 f"description: {json.dumps(sk.description)}\n"
                 "---\n\n"
-                f"{sk.instructions.strip()}\n"
+                f"{ref_hint}"
+                f"{effective_body.strip()}\n"
             )
             files.append(
                 CompiledFile(

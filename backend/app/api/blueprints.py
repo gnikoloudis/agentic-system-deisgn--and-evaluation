@@ -78,6 +78,21 @@ def api_save_blueprint(req: SaveBlueprintRequest) -> BlueprintWithYamlResponse:
         raise HTTPException(status_code=400, detail=f"Invalid architecture blueprint: {exc}") from exc
 
 
+class InspectSkillDirRequest(BaseModel):
+    source_dir: str
+
+
+@router.post("/inspect-skill-dir")
+def api_inspect_skill_dir(req: InspectSkillDirRequest) -> Dict[str, Any]:
+    """Inspect a local skill directory (SKILL.md + references/, scripts/, assets/, resources/) for one-click attachment."""
+    from app.compilers.base import inspect_skill_directory
+
+    try:
+        return inspect_skill_directory(req.source_dir)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.post("/convert-yaml", response_model=BlueprintWithYamlResponse)
 def api_convert_yaml(req: SaveBlueprintRequest) -> BlueprintWithYamlResponse:
     """Two-way in-memory sync between structured JSON blueprint and raw YAML without writing to disk."""

@@ -293,5 +293,59 @@ def test_enterprise_openai_compatible_provider_opencode(client: TestClient):
         )
 
 
+def test_folder_backed_skill_bundles_references_and_scripts(client: TestClient, tmp_path: Path):
+    """Verify folder-backed skills (`source_dir`) inspect frontmatter and bundle references/scripts/assets across all 3 harnesses."""
+    skill_dir = tmp_path / "react-expert"
+    (skill_dir / "references").mkdir(parents=True)
+    (skill_dir / "scripts").mkdir(parents=True)
+    (skill_dir / "assets").mkdir(parents=True)
+
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: react-expert\ndescription: React 19 specialist skill\n---\n\n# React Expert\nUse references/server-components.md.\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "references" / "server-components.md").write_text("# RSC Guide\n", encoding="utf-8")
+    (skill_dir / "scripts" / "check.py").write_text("print('ok')\n", encoding="utf-8")
+    (skill_dir / "assets" / "logo.svg").write_text("<svg></svg>\n", encoding="utf-8")
+
+    # 1. Inspect endpoint parses frontmatter & counts
+    insp = client.post("/api/blueprints/inspect-skill-dir", json={"source_dir": str(skill_dir)})
+    assert insp.status_code == 200
+    info = insp.json()
+    assert info["id"] == "react-expert"
+    assert info["description"] == "React 19 specialist skill"
+    assert info["counts"]["references"] == 1
+    assert info["counts"]["scripts"] == 1
+    assert info["counts"]["assets"] == 1
+
+    # 2. Compiling across all 3 harnesses preserves SKILL.md + references/ + scripts/ + assets/
+    from app.schemas.blueprint import SkillSpec
+
+    found = get_blueprint("solo-generalist")
+    assert found is not None
+    bp = found[0].model_copy(deep=True)
+    bp.skills.append(
+        SkillSpec(
+            id="react-expert",
+            name="React Expert",
+            description="React 19 specialist skill",
+            source_dir=str(skill_dir),
+        )
+    )
+
+    for harness, prefix in (
+        ("claude_code", ".claude/skills/react-expert"),
+        ("antigravity", ".agents/skills/react-expert"),
+        ("opencode", ".opencode/skills/react-expert"),
+    ):
+        comp = compile_architecture(bp, harness=harness, run_id="skill-bundle-test")  # type: ignore[arg-type]
+        paths = {f.relative_path for f in comp.files}
+        assert f"{prefix}/SKILL.md" in paths
+        assert f"{prefix}/references/server-components.md" in paths
+        assert f"{prefix}/scripts/check.py" in paths
+        assert f"{prefix}/assets/logo.svg" in paths
+
+
+
 
 

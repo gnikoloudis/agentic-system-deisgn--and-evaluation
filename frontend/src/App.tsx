@@ -1371,6 +1371,66 @@ export default function App() {
                           className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
                         />
                       </div>
+                      {/* Optional Folder-Backed Skill (SKILL.md + references/, scripts/, assets/, resources/) */}
+                      <div className="p-2.5 rounded-xl bg-slate-950 border border-emerald-800/60 space-y-2">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                          Skill Folder Path (Optional — bundles references/, scripts/, assets/)
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            placeholder="e.g. D:/MySkills/react-expert or skills/react-expert"
+                            value={selectedSkill.source_dir || ""}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                skills: selectedBlueprint.skills.map((sk) =>
+                                  sk.id === selectedSkill.id ? { ...sk, source_dir: e.target.value || null } : sk
+                                ),
+                              })
+                            }
+                            className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px] text-emerald-200"
+                          />
+                          <button
+                            onClick={async () => {
+                              const dir = (selectedSkill.source_dir || "").trim();
+                              if (!dir) {
+                                notify("Enter a local skill folder path first.", "err");
+                                return;
+                              }
+                              try {
+                                const info = await api.inspectSkillDir(dir);
+                                const updatedSkills = selectedBlueprint.skills.map((sk) =>
+                                  sk.id === selectedSkill.id
+                                    ? {
+                                      ...sk,
+                                      name: info.name || sk.name,
+                                      description: info.description || sk.description,
+                                      source_dir: info.source_dir,
+                                      instructions: info.instructions_preview || sk.instructions,
+                                    }
+                                    : sk
+                                );
+                                handleCanvasBlueprintChange({
+                                  ...selectedBlueprint,
+                                  skills: updatedSkills,
+                                });
+                                notify(
+                                  `Loaded '${info.name}' (${info.files.length} files: ${info.counts.references} refs, ${info.counts.scripts} scripts, ${info.counts.assets + info.counts.resources} assets/resources)`
+                                );
+                              } catch (err: unknown) {
+                                notify(err instanceof Error ? err.message : "Failed to inspect skill folder", "err");
+                              }
+                            }}
+                            className="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-[11px] cursor-pointer shrink-0"
+                            title="Parse SKILL.md frontmatter and discover references/, scripts/, assets/, resources/"
+                          >
+                            Load Folder
+                          </button>
+                        </div>
+                        <div className="text-[10px] text-slate-400">
+                          When set, compiling &amp; deploying copies <code className="text-emerald-300">SKILL.md</code> plus all subfolders (<code className="text-cyan-300">references/</code>, <code className="text-cyan-300">scripts/</code>, <code className="text-cyan-300">assets/</code>, <code className="text-cyan-300">resources/</code>) into every harness.
+                        </div>
+                      </div>
                       <div>
                         <label className="block text-slate-400 mb-1">
                           Template Instructions / Markdown Deliverable Format

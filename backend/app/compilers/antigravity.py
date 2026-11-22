@@ -129,65 +129,62 @@ class AntigravityAdapter(HarnessAdapter):
                 )
             )
 
-        # 3. Skills -> .agents/skills/<id>/SKILL.md and .agent/skills/<id>/SKILL.md
-        all_skills: List[Dict[str, str]] = [
-            {
-                "id": sk.id,
-                "name": sk.name,
-                "description": sk.description,
-                "instructions": sk.instructions,
-            }
-            for sk in blueprint.skills
-        ]
-        all_skills.extend(
-            [
-                {
-                    "id": "verify-setup",
-                    "name": "Verify Antigravity Agent Architecture & External Documentation Access",
-                    "description": "Use this skill when the user asks to verify setup, check installed subagents, or confirm external documentation readability.",
-                    "instructions": (
-                        "Perform a 3-step installation and documentation access health check using file read tools only:\n"
-                        "1. Confirm the active architecture in `GEMINI.md` and list all configured subagents.\n"
-                        "2. Read the **External Reference Documentation Directory** section in `GEMINI.md`, "
-                        "read the first file from each documentation subfolder (`initial_customer_requirements/`, `workshops/`, `bor_dor_and_dod/`), "
-                        "and confirm its contents are readable.\n"
-                        "3. Print a `SETUP VERIFIED: READY (Antigravity Mode)` checklist showing the active orchestrator, subagents, skills, and readable documentation files."
-                    ),
-                },
-                {
-                    "id": "generate-tba-pack",
-                    "name": "Generate Full TBA Delivery Pack (Workflows + Epics & User Stories)",
-                    "description": "Use this skill when the user asks to run the TBA pipeline, /generate-tba-pack, or produce WORKFLOWS_AND_DELIVERY_DOCS.md and EPICS_AND_USER_STORIES.md.",
-                    "instructions": (
-                        "Execute the complete multi-agent Technical Business Analyst pipeline using `GEMINI.md` and the external documentation directory:\n"
-                        "1. Define and invoke `requirements_elicitor` to read all files in `initial_customer_requirements/`, `workshops/`, and `bor_dor_and_dod/` from the external documentation directory and catalog `BR-001`..`BR-020` and `NFR-001`..`NFR-006`.\n"
-                        "2. Define and invoke `workflow_architect` to author `WORKFLOWS_AND_DELIVERY_DOCS.md` in the workspace root containing:\n"
-                        "   - End-to-End Process Workflow (`flowchart TD` Mermaid diagram)\n"
-                        "   - Actor & System Sequence Diagram (`sequenceDiagram` Mermaid diagram)\n"
-                        "   - 5-State Task Lifecycle State Diagram (`stateDiagram-v2` Mermaid diagram)\n"
-                        "   - Data Dictionary & RBAC/API Error Contract.\n"
-                        "3. Define and invoke `user_story_author` to author `EPICS_AND_USER_STORIES.md` in the workspace root containing:\n"
-                        "   - Epics Catalog (`EPIC-01`..`EPIC-05`)\n"
-                        "   - User Stories (`US-101`..`US-106`) with Connextra statements (`As a <role>, I want <goal>, so that <benefit>`), Ron Jeffries' 3 Cs (**Card**, **Conversation** for the Development Team, **Confirmation** with BDD `Given / When / Then` scenarios & `TC-xxx` IDs for the Testing Team), and Bill Wake's **INVEST** checklist\n"
-                        "   - Definition of Ready (DoR) & Definition of Done (DoD)\n"
-                        "   - Requirements Traceability Matrix (RTM) mapping `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `TC-xxx`.\n"
-                        "4. Define and invoke `ba_qa_gatekeeper` to review both markdown files and confirm `VERDICT: PASS`."
-                    ),
-                },
-                {
-                    "id": "evaluate-project",
-                    "name": "Prepare Workspace Deliverables for HarnessForge Evaluation",
-                    "description": "Use this skill when the user asks to evaluate the project or run /evaluate-project.",
-                    "instructions": (
-                        "1. Confirm that `WORKFLOWS_AND_DELIVERY_DOCS.md` and `EPICS_AND_USER_STORIES.md` exist in the current workspace.\n"
-                        "2. Summarize the Epics, User Stories, and Mermaid Workflow Diagrams produced.\n"
-                        "3. Inform the user: **'Deliverables are ready on disk! Switch to HarnessForge Studio and click `2. Evaluate Project` to view your 4-Layer Evaluation Scorecard and AI Architecture Advisor recommendations.'**"
-                    ),
-                },
-            ]
-        )
+        # 3. Skills -> .agents/skills/<id>/** and .agent/skills/<id>/** (supports folder-backed references/scripts/assets)
+        from app.compilers.base import load_skill_bundle_files
 
-        for sk_dict in all_skills:
+        for sk in blueprint.skills:
+            bundle_new, _ = load_skill_bundle_files(sk, f".agents/skills/{sk.id}")
+            files.extend(bundle_new)
+            bundle_legacy, _ = load_skill_bundle_files(sk, f".agent/skills/{sk.id}")
+            files.extend(bundle_legacy)
+
+        builtin_skills: List[Dict[str, str]] = [
+            {
+                "id": "verify-setup",
+                "name": "Verify Antigravity Agent Architecture & External Documentation Access",
+                "description": "Use this skill when the user asks to verify setup, check installed subagents, or confirm external documentation readability.",
+                "instructions": (
+                    "Perform a 3-step installation and documentation access health check using file read tools only:\n"
+                    "1. Confirm the active architecture in `GEMINI.md` and list all configured subagents.\n"
+                    "2. Read the **External Reference Documentation Directory** section in `GEMINI.md`, "
+                    "read the first file from each documentation subfolder (`initial_customer_requirements/`, `workshops/`, `bor_dor_and_dod/`), "
+                    "and confirm its contents are readable.\n"
+                    "3. Print a `SETUP VERIFIED: READY (Antigravity Mode)` checklist showing the active orchestrator, subagents, skills, and readable documentation files."
+                ),
+            },
+            {
+                "id": "generate-tba-pack",
+                "name": "Generate Full TBA Delivery Pack (Workflows + Epics & User Stories)",
+                "description": "Use this skill when the user asks to run the TBA pipeline, /generate-tba-pack, or produce WORKFLOWS_AND_DELIVERY_DOCS.md and EPICS_AND_USER_STORIES.md.",
+                "instructions": (
+                    "Execute the complete multi-agent Technical Business Analyst pipeline using `GEMINI.md` and the external documentation directory:\n"
+                    "1. Define and invoke `requirements_elicitor` to read all files in `initial_customer_requirements/`, `workshops/`, and `bor_dor_and_dod/` from the external documentation directory and catalog `BR-001`..`BR-020` and `NFR-001`..`NFR-006`.\n"
+                    "2. Define and invoke `workflow_architect` to author `WORKFLOWS_AND_DELIVERY_DOCS.md` in the workspace root containing:\n"
+                    "   - End-to-End Process Workflow (`flowchart TD` Mermaid diagram)\n"
+                    "   - Actor & System Sequence Diagram (`sequenceDiagram` Mermaid diagram)\n"
+                    "   - 5-State Task Lifecycle State Diagram (`stateDiagram-v2` Mermaid diagram)\n"
+                    "   - Data Dictionary & RBAC/API Error Contract.\n"
+                    "3. Define and invoke `user_story_author` to author `EPICS_AND_USER_STORIES.md` in the workspace root containing:\n"
+                    "   - Epics Catalog (`EPIC-01`..`EPIC-05`)\n"
+                    "   - User Stories (`US-101`..`US-106`) with Connextra statements (`As a <role>, I want <goal>, so that <benefit>`), Ron Jeffries' 3 Cs (**Card**, **Conversation** for the Development Team, **Confirmation** with BDD `Given / When / Then` scenarios & `TC-xxx` IDs for the Testing Team), and Bill Wake's **INVEST** checklist\n"
+                    "   - Definition of Ready (DoR) & Definition of Done (DoD)\n"
+                    "   - Requirements Traceability Matrix (RTM) mapping `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `TC-xxx`.\n"
+                    "4. Define and invoke `ba_qa_gatekeeper` to review both markdown files and confirm `VERDICT: PASS`."
+                ),
+            },
+            {
+                "id": "evaluate-project",
+                "name": "Prepare Workspace Deliverables for HarnessForge Evaluation",
+                "description": "Use this skill when the user asks to evaluate the project or run /evaluate-project.",
+                "instructions": (
+                    "1. Confirm that `WORKFLOWS_AND_DELIVERY_DOCS.md` and `EPICS_AND_USER_STORIES.md` exist in the current workspace.\n"
+                    "2. Summarize the Epics, User Stories, and Mermaid Workflow Diagrams produced.\n"
+                    "3. Inform the user: **'Deliverables are ready on disk! Switch to HarnessForge Studio and click `2. Evaluate Project` to view your 4-Layer Evaluation Scorecard and AI Architecture Advisor recommendations.'**"
+                ),
+            },
+        ]
+
+        for sk_dict in builtin_skills:
             skill_md = (
                 "---\n"
                 f"name: {sk_dict['id']}\n"

@@ -63,6 +63,7 @@ export interface SkillSpec {
   name: string;
   description: string;
   instructions: string;
+  source_dir?: string | null;
   trigger_command?: string | null;
 }
 
