@@ -62,6 +62,12 @@ export default function App() {
   const [harnessModels, setHarnessModels] = useState<HarnessModelsConfig | null>(null);
   const [newCustomModelId, setNewCustomModelId] = useState<string>("");
   const [newCustomModelLabel, setNewCustomModelLabel] = useState<string>("");
+  const [entProvId, setEntProvId] = useState<string>("enterprise-llm");
+  const [entProvName, setEntProvName] = useState<string>("Enterprise LLM Gateway");
+  const [entProvBaseUrl, setEntProvBaseUrl] = useState<string>("");
+  const [entProvApiKeyEnv, setEntProvApiKeyEnv] = useState<string>("ENTERPRISE_LLM_API_KEY");
+  const [entProvHeaders, setEntProvHeaders] = useState<string>("");
+  const [entProvModelsText, setEntProvModelsText] = useState<string>("");
   const [renamingBlueprintId, setRenamingBlueprintId] = useState<string | null>(null);
   const [renamingBlueprintTitle, setRenamingBlueprintTitle] = useState<string>("");
   const [compiledResult, setCompiledResult] = useState<CompilationResult | null>(null);
@@ -1646,6 +1652,202 @@ export default function App() {
                       + Register Model in {HARNESS_LABELS[runHarness].name}
                     </button>
                   </div>
+
+                  {/* Enterprise OpenAI-Compatible LLM Hosting Platform (OpenCode) */}
+                  {runHarness === "opencode" && (
+                    <div className="p-3 rounded-xl bg-slate-950 border border-cyan-800/60 space-y-2.5">
+                      <div>
+                        <div className="text-[11px] font-bold uppercase tracking-wider text-cyan-300">
+                          Enterprise OpenAI-Compatible LLM Provider (OpenCode)
+                        </div>
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          Compiles into <code className="text-cyan-300">opencode.json</code> (<code>@ai-sdk/openai-compatible</code>) &amp; registers models as <code className="text-emerald-300">&lt;provider_id&gt;/&lt;model_id&gt;</code>.
+                        </div>
+                      </div>
+
+                      {/* Existing Configured Enterprise Providers */}
+                      {(harnessModels.custom_providers || []).length > 0 && (
+                        <div className="space-y-1.5">
+                          {(harnessModels.custom_providers || []).map((prov) => (
+                            <div
+                              key={prov.id}
+                              className="p-2 rounded-lg bg-slate-900 border border-slate-800 flex items-start justify-between gap-2"
+                            >
+                              <div className="min-w-0 space-y-0.5">
+                                <div className="font-semibold text-white text-[11px] flex items-center gap-1.5">
+                                  <span>{prov.name}</span>
+                                  <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-800/60">
+                                    {prov.id}
+                                  </span>
+                                </div>
+                                <div className="font-mono text-[10px] text-slate-400 truncate">
+                                  {prov.base_url}
+                                </div>
+                                <div className="text-[10px] text-slate-400">
+                                  API Key Env: <code className="text-amber-300">{`{env:${prov.api_key_env || "OPENAI_API_KEY"}}`}</code>
+                                  {" · "}Models:{" "}
+                                  <span className="font-mono text-emerald-300">
+                                    {prov.models.map((m) => m.id).join(", ")}
+                                  </span>
+                                </div>
+                              </div>
+                              <button
+                                onClick={async () => {
+                                  const remaining = (harnessModels.custom_providers || []).filter(
+                                    (p) => p.id !== prov.id
+                                  );
+                                  const cleanedOcModels = (harnessModels.native_models.opencode || []).filter(
+                                    (m) => !m.id.startsWith(`${prov.id}/`)
+                                  );
+                                  const saved = await api.updateHarnessModels({
+                                    custom_providers: remaining,
+                                    native_models: {
+                                      ...harnessModels.native_models,
+                                      opencode: cleanedOcModels,
+                                    },
+                                  });
+                                  setHarnessModels(saved);
+                                  if (selectedBlueprint) {
+                                    const comp = await api.compilePreview(selectedBlueprint.metadata.id, "opencode");
+                                    setCompiledResult(comp);
+                                  }
+                                  notify(`Removed enterprise provider '${prov.id}'`);
+                                }}
+                                className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer"
+                                title="Remove enterprise provider"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      {/* Add / Update Enterprise Provider Form */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] text-slate-400 mb-0.5">Provider ID</label>
+                          <input
+                            placeholder="e.g. enterprise-llm"
+                            value={entProvId}
+                            onChange={(e) => setEntProvId(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px]"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-slate-400 mb-0.5">Display Name</label>
+                          <input
+                            placeholder="e.g. Company LLM Gateway"
+                            value={entProvName}
+                            onChange={(e) => setEntProvName(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px]"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">
+                          OpenAI-Compatible Base URL (ending in /v1)
+                        </label>
+                        <input
+                          placeholder="https://llm.internal.company.com/v1"
+                          value={entProvBaseUrl}
+                          onChange={(e) => setEntProvBaseUrl(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px] text-cyan-200"
+                        />
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[10px] text-slate-400 mb-0.5">
+                            API Key Env Variable Name
+                          </label>
+                          <input
+                            placeholder="ENTERPRISE_LLM_API_KEY"
+                            value={entProvApiKeyEnv}
+                            onChange={(e) => setEntProvApiKeyEnv(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px] text-amber-300"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] text-slate-400 mb-0.5">
+                            Model IDs (comma-separated)
+                          </label>
+                          <input
+                            placeholder="gpt-4o, llama-3.3-70b"
+                            value={entProvModelsText}
+                            onChange={(e) => setEntProvModelsText(e.target.value)}
+                            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px] text-emerald-300"
+                          />
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">
+                          Optional Custom Headers (one per line: <code>Header-Name: value</code>)
+                        </label>
+                        <textarea
+                          rows={2}
+                          placeholder={"X-Tenant-Id: engineering\nX-Api-Version: 2025-01"}
+                          value={entProvHeaders}
+                          onChange={(e) => setEntProvHeaders(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px] resize-none"
+                        />
+                      </div>
+
+                      <button
+                        onClick={async () => {
+                          const pid = entProvId.trim().replace(/\s+/g, "-").toLowerCase();
+                          const baseUrl = entProvBaseUrl.trim();
+                          const modelIds = entProvModelsText
+                            .split(",")
+                            .map((s) => s.trim())
+                            .filter(Boolean);
+                          if (!pid || !baseUrl || modelIds.length === 0) {
+                            notify("Please enter Provider ID, Base URL, and at least one Model ID.", "err");
+                            return;
+                          }
+                          const parsedHeaders: Record<string, string> = {};
+                          entProvHeaders.split("\n").forEach((line) => {
+                            const idx = line.indexOf(":");
+                            if (idx > 0) {
+                              const k = line.slice(0, idx).trim();
+                              const v = line.slice(idx + 1).trim();
+                              if (k && v) parsedHeaders[k] = v;
+                            }
+                          });
+                          const newProv = {
+                            id: pid,
+                            name: entProvName.trim() || pid,
+                            protocol: "openai_compatible" as const,
+                            base_url: baseUrl,
+                            api_key_env: entProvApiKeyEnv.trim() || "ENTERPRISE_LLM_API_KEY",
+                            headers: Object.keys(parsedHeaders).length > 0 ? parsedHeaders : undefined,
+                            models: modelIds.map((m) => ({ id: m, name: m, tier: "coding" })),
+                            enabled: true,
+                          };
+                          const existing = (harnessModels.custom_providers || []).filter((p) => p.id !== pid);
+                          const saved = await api.updateHarnessModels({
+                            custom_providers: [...existing, newProv],
+                          });
+                          setHarnessModels(saved);
+                          setEntProvBaseUrl("");
+                          setEntProvModelsText("");
+                          setEntProvHeaders("");
+                          if (selectedBlueprint) {
+                            const comp = await api.compilePreview(selectedBlueprint.metadata.id, "opencode");
+                            setCompiledResult(comp);
+                          }
+                          notify(
+                            `Saved Enterprise Provider '${pid}' (${modelIds.length} model(s))! They are now selectable in OpenCode tier & agent dropdowns.`
+                          );
+                        }}
+                        className="w-full py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs cursor-pointer"
+                      >
+                        + Save Enterprise OpenAI-Compatible Provider
+                      </button>
+                    </div>
+                  )}
 
                   {/* Best Practices Reference Card */}
                   <div className="p-3 rounded-xl bg-indigo-950/30 border border-indigo-800/50 space-y-2">

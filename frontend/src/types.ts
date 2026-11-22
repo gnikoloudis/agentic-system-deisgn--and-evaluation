@@ -40,9 +40,21 @@ export interface SubagentSpec {
   max_turns: number;
 }
 
+export interface EnterpriseProviderConfig {
+  id: string;
+  name: string;
+  protocol: "openai_compatible";
+  base_url: string;
+  api_key_env: string;
+  headers?: Record<string, string>;
+  models: Array<{ id: string; name: string; tier?: string }>;
+  enabled?: boolean;
+}
+
 export interface HarnessModelsConfig {
   tier_map: Record<HarnessType, Record<string, string>>;
   native_models: Record<HarnessType, Array<{ id: string; label: string; tier: string }>>;
+  custom_providers?: EnterpriseProviderConfig[];
   best_practices: Record<string, string>;
 }
 

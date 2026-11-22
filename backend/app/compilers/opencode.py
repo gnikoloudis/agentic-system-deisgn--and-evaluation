@@ -200,7 +200,46 @@ class OpenCodeAdapter(HarnessAdapter):
             )
         )
 
-        # 4. opencode.json (Root config, agent roster, permissions including external_directory read access, MCP servers)
+        # 4. opencode.json (Root config, custom enterprise providers, agent roster, permissions, MCP servers)
+        from app.compilers.base import get_harness_models_config
+
+        models_cfg = get_harness_models_config()
+        custom_providers_list = models_cfg.get("custom_providers", [])
+        provider_config_map: Dict[str, Any] = {}
+        for prov in custom_providers_list:
+            if prov.get("enabled", True) is False:
+                continue
+            pid = str(prov.get("id", "")).strip()
+            base_url = str(prov.get("base_url", "")).strip()
+            if not pid or not base_url:
+                continue
+            prov_options: Dict[str, Any] = {"baseURL": base_url}
+            api_key_env = str(prov.get("api_key_env", "")).strip()
+            api_key_literal = str(prov.get("api_key", "")).strip()
+            if api_key_env:
+                prov_options["apiKey"] = f"{{env:{api_key_env}}}"
+            elif api_key_literal:
+                prov_options["apiKey"] = api_key_literal
+            headers = prov.get("headers")
+            if isinstance(headers, dict) and headers:
+                prov_options["headers"] = headers
+
+            prov_models: Dict[str, Any] = {}
+            for raw_m in prov.get("models", []):
+                m_id = str(raw_m.get("id") if isinstance(raw_m, dict) else raw_m).strip()
+                m_name = str(raw_m.get("name") if isinstance(raw_m, dict) else m_id).strip() or m_id
+                if m_id:
+                    # Strip leading `<pid>/` inside the provider's own `models` map
+                    short_id = m_id[len(pid) + 1 :] if m_id.startswith(f"{pid}/") else m_id
+                    prov_models[short_id] = {"name": m_name}
+
+            provider_config_map[pid] = {
+                "npm": "@ai-sdk/openai-compatible",
+                "name": str(prov.get("name") or pid).strip(),
+                "options": prov_options,
+                "models": prov_models,
+            }
+
         opencode_json: Dict[str, Any] = {
             "$schema": "https://opencode.ai/config.json",
             "model": orch_model,
@@ -213,6 +252,8 @@ class OpenCodeAdapter(HarnessAdapter):
                 "bash": "allow" if blueprint.orchestrator.permissions.allow_shell else "ask",
             },
         }
+        if provider_config_map:
+            opencode_json["provider"] = provider_config_map
         if blueprint.mcp_servers:
             opencode_json["mcp"] = {
                 srv.id: {

@@ -107,12 +107,13 @@ MODEL_BEST_PRACTICES: Dict[str, str] = {
 
 
 def get_harness_models_config() -> Dict[str, Any]:
-    """Load user-configurable per-harness model tier mappings and native model catalogs."""
+    """Load user-configurable per-harness model tier mappings, native model catalogs, and enterprise OpenAI-compatible providers."""
     ensure_directories()
     if HARNESS_MODELS_PATH.exists():
         try:
             data = json.loads(HARNESS_MODELS_PATH.read_text(encoding="utf-8"))
             if "tier_map" in data and "native_models" in data:
+                data.setdefault("custom_providers", [])
                 data["best_practices"] = MODEL_BEST_PRACTICES
                 return data
         except Exception:
@@ -120,18 +121,53 @@ def get_harness_models_config() -> Dict[str, Any]:
     default_payload = {
         "tier_map": DEFAULT_MODEL_TIER_MAP,
         "native_models": DEFAULT_NATIVE_MODELS,
+        "custom_providers": [],
         "best_practices": MODEL_BEST_PRACTICES,
     }
     HARNESS_MODELS_PATH.write_text(json.dumps(default_payload, indent=2), encoding="utf-8")
     return default_payload
 
 
-def save_harness_models_config(tier_map: Dict[str, Dict[str, str]], native_models: Dict[str, List[Dict[str, str]]]) -> Dict[str, Any]:
-    """Persist custom per-harness model tier mappings and model lists."""
+def save_harness_models_config(
+    tier_map: Dict[str, Dict[str, str]],
+    native_models: Dict[str, List[Dict[str, str]]],
+    custom_providers: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Persist custom per-harness model tier mappings, model lists, and enterprise OpenAI-compatible providers."""
     ensure_directories()
+    if custom_providers is None:
+        existing = get_harness_models_config()
+        custom_providers = existing.get("custom_providers", [])
+
+    # Ensure every model listed in an enterprise provider is registered in native_models["opencode"]
+    oc_list = list(native_models.get("opencode", []))
+    existing_oc_ids = {m["id"] for m in oc_list}
+    for prov in custom_providers:
+        pid = str(prov.get("id", "")).strip()
+        pname = str(prov.get("name") or pid).strip()
+        if not pid:
+            continue
+        for raw_m in prov.get("models", []):
+            m_id = str(raw_m.get("id") if isinstance(raw_m, dict) else raw_m).strip()
+            m_name = str(raw_m.get("name") if isinstance(raw_m, dict) else m_id).strip() or m_id
+            if not m_id:
+                continue
+            full_id = m_id if m_id.startswith(f"{pid}/") else f"{pid}/{m_id}"
+            if full_id not in existing_oc_ids:
+                oc_list.append(
+                    {
+                        "id": full_id,
+                        "label": f"{pname}: {m_name} ({full_id})",
+                        "tier": str(raw_m.get("tier", "coding")) if isinstance(raw_m, dict) else "coding",
+                    }
+                )
+                existing_oc_ids.add(full_id)
+    native_models["opencode"] = oc_list
+
     payload = {
         "tier_map": tier_map,
         "native_models": native_models,
+        "custom_providers": custom_providers,
         "best_practices": MODEL_BEST_PRACTICES,
     }
     HARNESS_MODELS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")

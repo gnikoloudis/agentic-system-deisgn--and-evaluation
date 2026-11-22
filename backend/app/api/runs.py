@@ -67,11 +67,12 @@ def api_get_harness_models() -> Dict[str, Any]:
 
 @router.put("/harnesses/models")
 def api_update_harness_models(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Save updated per-harness tier mappings and custom native models."""
+    """Save updated per-harness tier mappings, custom native models, and enterprise OpenAI-compatible providers."""
     curr = get_harness_models_config()
     tier_map = payload.get("tier_map") or curr["tier_map"]
     native_models = payload.get("native_models") or curr["native_models"]
-    return save_harness_models_config(tier_map, native_models)
+    custom_providers = payload.get("custom_providers") if "custom_providers" in payload else curr.get("custom_providers", [])
+    return save_harness_models_config(tier_map, native_models, custom_providers)
 
 
 @router.post("/harnesses/models/sync")

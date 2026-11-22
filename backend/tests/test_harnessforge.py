@@ -248,4 +248,50 @@ def test_rename_and_delete_architecture_blueprint(client: TestClient):
     assert client.get("/api/blueprints/temp-custom-blueprint").status_code == 404
 
 
+def test_enterprise_openai_compatible_provider_opencode(client: TestClient):
+    """Verify Enterprise OpenAI-compatible provider config registers models and compiles into opencode.json."""
+    orig_cfg = client.get("/api/runs/harnesses/models").json()
+    try:
+        test_provider = {
+            "id": "acme-gateway",
+            "name": "Acme Enterprise LLM",
+            "protocol": "openai_compatible",
+            "base_url": "https://llm.acme.internal/v1",
+            "api_key_env": "ACME_LLM_API_KEY",
+            "headers": {"X-Tenant-Id": "eng-platform"},
+            "models": [{"id": "gpt-4o-enterprise", "name": "GPT-4o Enterprise", "tier": "coding"}],
+            "enabled": True,
+        }
+        put_resp = client.put(
+            "/api/runs/harnesses/models",
+            json={"custom_providers": [*orig_cfg.get("custom_providers", []), test_provider]},
+        )
+        assert put_resp.status_code == 200
+        updated = put_resp.json()
+        assert any(m["id"] == "acme-gateway/gpt-4o-enterprise" for m in updated["native_models"]["opencode"])
+
+        comp_resp = client.get("/api/blueprints/planner-coder-verifier/compile/opencode")
+        assert comp_resp.status_code == 200
+        oc_file = next(f for f in comp_resp.json()["files"] if f["relative_path"] == "opencode.json")
+        oc_json = json.loads(oc_file["content"])
+        assert "provider" in oc_json
+        assert "acme-gateway" in oc_json["provider"]
+        prov_out = oc_json["provider"]["acme-gateway"]
+        assert prov_out["npm"] == "@ai-sdk/openai-compatible"
+        assert prov_out["options"]["baseURL"] == "https://llm.acme.internal/v1"
+        assert prov_out["options"]["apiKey"] == "{env:ACME_LLM_API_KEY}"
+        assert prov_out["options"]["headers"]["X-Tenant-Id"] == "eng-platform"
+        assert "gpt-4o-enterprise" in prov_out["models"]
+    finally:
+        client.put(
+            "/api/runs/harnesses/models",
+            json={
+                "tier_map": orig_cfg["tier_map"],
+                "native_models": orig_cfg["native_models"],
+                "custom_providers": orig_cfg.get("custom_providers", []),
+            },
+        )
+
+
+
 
