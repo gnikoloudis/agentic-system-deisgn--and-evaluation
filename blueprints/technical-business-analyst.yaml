@@ -6,8 +6,8 @@ metadata:
   version: 1.0.0
   description: End-to-end Technical Business Analyst (TBA) multi-agent architecture for OpenCode, Claude
     Code, and Antigravity. Elicits business requirements, models Mermaid workflows & delivery specs, authors
-    Epics & User Stories (Connextra format, Ron Jeffries' 3 Cs, Bill Wake's INVEST,
-    and BDD Given/When/Then Acceptance Criteria bridging Development and Testing), and audits traceability.
+    Epics & User Stories (Connextra format, Ron Jeffries' 3 Cs, Bill Wake's INVEST, and BDD Given/When/Then
+    Acceptance Criteria bridging Development and Testing), and audits traceability.
   tags:
   - business-analysis
   - user-stories
@@ -118,8 +118,8 @@ subagents:
   max_turns: 15
 - id: user_story_author
   name: Anna(Dev-QA Bridge)
-  role: Authors EPICS_AND_USER_STORIES.md adhering to User Story standards (Connextra, 3 Cs,
-    INVEST, BDD Given/When/Then, RTM)
+  role: Authors EPICS_AND_USER_STORIES.md adhering to User Story standards (Connextra, 3 Cs, INVEST, BDD
+    Given/When/Then, RTM)
   model: coding
   harness_models: {}
   system_prompt: "You are the Agile Epics & User Story Author (`user_story_author`).\nYour deliverable\
