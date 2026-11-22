@@ -1,0 +1,266 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: planner-coder-verifier-custom
+  name: Planner -> Coder <-> Verifier (Actor-Critic Loop) (Custom)
+  version: 1.0.0
+  description: 'Hierarchical 3-subagent architecture enforcing separation of concerns: Root Orchestrator
+    delegates discovery to Planner, implementation to Coder, and independent test/diff verification to
+    Verifier with up to 3 critic retry loops.'
+  tags:
+  - multi-agent
+  - actor-critic
+  - verified
+  - recommended
+  author: HarnessForge Presets
+orchestrator:
+  id: root_orchestrator
+  name: Lead Orchestrator
+  role: Workflow coordinator that routes tasks across Planner, Coder, and Verifier
+  model: default
+  harness_models: {}
+  system_prompt: 'You are the Lead Orchestrator managing a strict 3-stage software engineering pipeline.
+
+    You MUST NOT directly edit source files yourself. Instead:
+
+    1. Invoke the `planner` subagent first to inspect the codebase and design an implementation plan.
+
+    2. Pass the planner''s specification to the `coder` subagent to implement the changes.
+
+    3. Invoke the `verifier` subagent to run tests and inspect `git diff`.
+
+    4. If `verifier` reports `VERDICT: FAIL`, route the defect report back to `coder` (up to 3 retries)
+    and re-run `verifier`.
+
+    5. Only conclude when `verifier` outputs `VERDICT: PASS`.
+
+    '
+  tools:
+  - read
+  - grep
+  - glob
+  - subagent
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+  budgets:
+    max_turns: 45
+    max_cost_usd: 3.0
+    timeout_seconds: 600
+    context_compaction_threshold_pct: 80
+subagents:
+- id: planner
+  name: Architecture Planner
+  role: Read-only codebase researcher that identifies root causes and writes an exact file-by-file change
+    plan
+  model: reasoning
+  harness_models: {}
+  system_prompt: 'You are the Architecture Planner. You operate in strictly read-only mode.
+
+    1. Inspect the repository files and existing tests.
+
+    2. Identify the exact root cause or feature requirements.
+
+    3. Return a concise, numbered implementation blueprint specifying exact file paths, functions, and
+    edge cases to test.
+
+    '
+  tools:
+  - read
+  - grep
+  - glob
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands: []
+  max_turns: 12
+- id: coder
+  name: Implementation Engineer
+  role: Hands-on software engineer that implements code and unit test updates following the Planner's
+    blueprint
+  model: coding
+  harness_models: {}
+  system_prompt: 'You are the Implementation Engineer (`coder`).
+
+    Follow the plan provided by the Orchestrator / Planner and any defect feedback from the Verifier.
+
+    Write clean, idiomatic code and add or update unit tests as needed.
+
+    Summarize the exact files and lines changed when returning to the Orchestrator.
+
+    '
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  - bash
+  permissions:
+    allow_shell: true
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+  max_turns: 20
+- id: verifier
+  name: QA & Verification Critic
+  role: Independent testing and code review critic that executes pytest and audits git diff
+  model: fast
+  harness_models: {}
+  system_prompt: 'You are the QA & Verification Critic (`verifier`). You must NEVER modify code files.
+
+    1. Execute the test suite (`pytest -v`) and inspect `git diff`.
+
+    2. Check that all task requirements and edge cases are satisfied without regressions.
+
+    3. End your response with `VERDICT: PASS` if all tests pass and code quality is high, or `VERDICT:
+    FAIL` followed by concrete, line-level defects for the `coder`.
+
+    '
+  tools:
+  - read
+  - grep
+  - bash
+  permissions:
+    allow_shell: true
+    allow_write: false
+    allow_network: false
+    allowed_commands:
+    - pytest
+    - python -m pytest
+    - git diff
+    - git status
+    blocked_commands: []
+  max_turns: 12
+- id: specialist_4
+  name: Specialist Agent 4
+  role: Handles specialized subtask delegated by the orchestrator
+  model: coding
+  harness_models: {}
+  system_prompt: You are specialist_4. Execute your delegated responsibility cleanly and return a concise
+    summary.
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  - bash
+  permissions:
+    allow_shell: true
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+  max_turns: 15
+skills:
+- id: diff-audit
+  name: Git Diff & Regression Audit
+  description: Structured checklist for auditing git diff and pytest results
+  instructions: '1. Run `git status --short` and `git diff`.
+
+    2. Ensure no untracked temporary files or debug print statements remain.
+
+    3. Run `pytest` and verify 100% pass rate.
+
+    '
+  trigger_command: /diff-audit
+hooks:
+- id: enforce_orchestrator_delegation
+  event: PreToolUse
+  matcher: Write|Edit|MultiEdit
+  target_agent: root_orchestrator
+  action: block
+  command: null
+  message: 'Topology violation: root_orchestrator cannot edit files directly. Delegate code changes to
+    the `coder` subagent.'
+- id: require_verifier_before_stop
+  event: Stop
+  matcher: .*
+  target_agent: root_orchestrator
+  action: block
+  command: null
+  message: 'Cannot finish task until the `verifier` subagent has executed and reported VERDICT: PASS.'
+mcp_servers: []
+topology:
+  pattern: sequential-pipeline
+  enforcement_mode: prompt
+  entry_node: root_orchestrator
+  edges:
+  - id: e1_plan
+    source: root_orchestrator
+    target: planner
+    condition: 'Step 1: Initial task analysis'
+    order: 1
+    required: true
+    max_loops: 1
+  - id: e2_code
+    source: planner
+    target: coder
+    condition: 'Step 2: Plan ready -> Implement'
+    order: 2
+    required: true
+    max_loops: 1
+  - id: e3_verify
+    source: coder
+    target: verifier
+    condition: 'Step 3: Code updated -> Run QA Verifier'
+    order: 3
+    required: true
+    max_loops: 3
+  - id: e4_critic_loop
+    source: verifier
+    target: coder
+    condition: If VERDICT == FAIL (Retry loop <= 3)
+    order: 4
+    required: false
+    max_loops: 3
+  - id: e_specialist_4
+    source: root_orchestrator
+    target: specialist_4
+    condition: 'Step 5: Delegate to specialist_4'
+    order: 5
+    required: true
+    max_loops: 1
+  - id: e_skill_diff_audit
+    source: verifier
+    target: diff-audit
+    condition: Applies /diff-audit regression checklist
+    order: 6
+    required: false
+    max_loops: 1
+visual_layout:
+  nodes:
+    root_orchestrator:
+      x: 356.0
+      y: -16.0
+    planner:
+      x: -2.0
+      y: 516.0
+    coder:
+      x: 857.0
+      y: 271.0
+    verifier:
+      x: 321.0
+      y: 734.0
+    diff-audit:
+      x: 1140.0
+      y: 619.0
+    enforce_orchestrator_delegation:
+      x: -37.0
+      y: -91.0
+    require_verifier_before_stop:
+      x: 1061.0
+      y: -27.0
+    specialist_4:
+      x: -20.0
+      y: 142.0
