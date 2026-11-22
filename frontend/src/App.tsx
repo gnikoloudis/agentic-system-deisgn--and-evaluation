@@ -72,8 +72,8 @@ export default function App() {
   const [renamingBlueprintTitle, setRenamingBlueprintTitle] = useState<string>("");
   const [compiledResult, setCompiledResult] = useState<CompilationResult | null>(null);
   const [selectedCompiledFileIdx, setSelectedCompiledFileIdx] = useState<number>(0);
-  const [exportDir, setExportDir] = useState<string>("tba_opencode_workspace");
-  const [externalDocsDir, setExternalDocsDir] = useState<string>("test_application_docs");
+  const [exportDir, setExportDir] = useState<string>("");
+  const [externalDocsDir, setExternalDocsDir] = useState<string>("");
   const [deploymentReceipt, setDeploymentReceipt] = useState<{
     run_id: string;
     target_directory: string;
@@ -189,6 +189,9 @@ export default function App() {
 
   const handleCanvasBlueprintChange = async (updated: AgentArchitecture) => {
     setSelectedBlueprint(updated);
+    setBlueprints((prev) =>
+      prev.map((b) => (b.metadata.id === updated.metadata.id ? updated : b))
+    );
     try {
       const synced = await api.convertYaml({ blueprint: updated });
       setRawYaml(synced.raw_yaml);
@@ -2092,8 +2095,8 @@ export default function App() {
                           <div className="text-[11px] font-semibold text-slate-300">
                             Deploy to Workspace & Link External Docs
                           </div>
-                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-700/50">
-                            Active Blueprint: {selectedBlueprint.metadata.id}
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-700/50 truncate max-w-[230px]" title={`${selectedBlueprint.metadata.name} (${selectedBlueprint.metadata.id})`}>
+                            {selectedBlueprint.metadata.name}
                           </span>
                         </div>
                         <div className="space-y-1.5">
@@ -2106,19 +2109,25 @@ export default function App() {
                               onChange={(e) => handleSelectBlueprint(e.target.value)}
                               className="w-full bg-slate-950 border border-indigo-500/60 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-white"
                             >
-                              {blueprints.map((b) => (
-                                <option key={b.metadata.id} value={b.metadata.id}>
-                                  {b.metadata.name} ({b.metadata.id})
-                                </option>
-                              ))}
+                              {blueprints.map((b) => {
+                                const displayName =
+                                  b.metadata.id === selectedBlueprint.metadata.id
+                                    ? selectedBlueprint.metadata.name
+                                    : b.metadata.name;
+                                return (
+                                  <option key={b.metadata.id} value={b.metadata.id}>
+                                    {displayName} ({b.metadata.id})
+                                  </option>
+                                );
+                              })}
                             </select>
                           </div>
                           <div>
                             <label className="block text-[10px] text-slate-400 mb-0.5">
-                              1. Target {HARNESS_LABELS[previewHarness].name} Project Workspace Folder (where you run `{HARNESS_LABELS[previewHarness].badge}`)
+                              1. Target {HARNESS_LABELS[previewHarness].name} Project Workspace Folder
                             </label>
                             <input
-                              placeholder="Workspace folder (e.g. D:\MyProjectWorkspace or .)"
+                              placeholder={`Target project directory for ${HARNESS_LABELS[previewHarness].name} (e.g. D:\\Projects\\my-app)`}
                               value={exportDir}
                               onChange={(e) => setExportDir(e.target.value)}
                               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono"
@@ -2126,10 +2135,10 @@ export default function App() {
                           </div>
                           <div>
                             <label className="block text-[10px] text-slate-400 mb-0.5">
-                              2. External Documentation Folder (workshops, customer requirements, BoR/DoR/DoD)
+                              2. External Reference Documentation Folder (Optional)
                             </label>
                             <input
-                              placeholder="External docs folder (e.g. test_application_docs or D:\Docs)"
+                              placeholder="Optional: External docs directory (e.g. D:\Projects\my-app\docs)"
                               value={externalDocsDir}
                               onChange={(e) => setExternalDocsDir(e.target.value)}
                               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-emerald-300"

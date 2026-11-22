@@ -148,16 +148,14 @@ def api_export_to_directory(architecture_id: str, req: ExportToDirectoryRequest)
     candidate = Path(raw_dir)
     target_path = candidate.resolve() if candidate.is_absolute() else (ROOT_DIR / candidate).resolve()
 
-    # Resolve external documentation directory (defaults to test_application_docs if present)
+    # Resolve optional external documentation directory (only linked when explicitly specified)
     raw_docs = (req.docs_directory or "").strip()
+    docs_path: Optional[Path] = None
     if raw_docs:
         docs_cand = Path(raw_docs)
-        docs_path: Optional[Path] = (
+        docs_path = (
             docs_cand.resolve() if docs_cand.is_absolute() else (ROOT_DIR / docs_cand).resolve()
         )
-    else:
-        default_docs = (ROOT_DIR / "test_application_docs").resolve()
-        docs_path = default_docs if default_docs.exists() else None
 
     discovered_docs: List[str] = []
     if docs_path and docs_path.exists():
