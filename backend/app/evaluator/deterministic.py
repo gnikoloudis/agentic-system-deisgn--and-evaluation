@@ -125,13 +125,18 @@ def run_deterministic_verifiers(
                     output = f"User Story specification '{target.name}' does not exist"
                 else:
                     content = target.read_text(encoding="utf-8", errors="replace")
-                    clean_md = re.sub(r"[\*_`]", "", content)
-                    # 1. Connextra role-feature-benefit format ("As a ... I want ... So that ...")
+                    # Strip markdown bold/italic/code/blockquote/bullet markers so multi-line formatted stories & Gherkin match cleanly
+                    clean_md = re.sub(r"[\*_`>]", "", content)
+                    # 1. Connextra role-feature-benefit format ("As a ... I want ... So that ...", single-line or multi-line)
                     connextra_matches = re.findall(
-                        r"as an?\s+[^\n]+?,\s*i want\s+[^\n]+?,\s*so that\s+[^\n]+",
+                        r"\bas an?\s+[\s\S]{3,220}?\bi want\b[\s\S]{3,350}?\bso that\b[^\n]+",
                         clean_md,
                         flags=re.IGNORECASE,
                     )
+                    # Exclude template placeholder examples like "<persona>" or "<goal>"
+                    connextra_matches = [
+                        m for m in connextra_matches if "<persona>" not in m.lower() and "<role>" not in m.lower()
+                    ]
                     # 2. Ron Jeffries' 3 Cs: Card (US- ID & Epic link), Conversation (Dev notes), Confirmation (Given/When/Then BDD + TC-)
                     has_card_ids = bool(re.search(r"\bEPIC-\d+", content)) and bool(
                         re.search(r"\bUS-\d+", content)
@@ -140,7 +145,7 @@ def run_deterministic_verifiers(
                         re.search(r"(conversation|developer notes|technical constraints|data rules)", content, re.I)
                     )
                     bdd_matches = re.findall(
-                        r"given\s+[^\n]+?when\s+[^\n]+?then\s+[^\n]+",
+                        r"\bgiven\s+[\s\S]{3,400}?\bwhen\s+[\s\S]{3,400}?\bthen\s+[^\n]+",
                         clean_md,
                         flags=re.IGNORECASE,
                     )
