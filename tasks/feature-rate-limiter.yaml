@@ -1,0 +1,41 @@
+api_version: harnessforge/v1
+kind: TaskSpec
+id: feature-rate-limiter
+name: "Implement Sliding Window Rate Limiter with Burst Allowance"
+category: feature
+difficulty: medium
+description: "Tests multi-step planning, implementation, and edge-case verification by asking the agent architecture to implement a sliding-window rate limiter in `limiter.py` that passes all concurrency and window-expiry unit tests."
+prompt: |
+  Complete the `SlidingWindowRateLimiter` class in `limiter.py`.
+  Requirements:
+  1. `allow_request(client_id: str, timestamp: float) -> bool` must track request timestamps per `client_id`.
+  2. Requests older than ` timestamp - window_seconds ` (strictly less than `<= timestamp - window_seconds`) must be evicted before checking capacity.
+  3. Allow up to `max_requests + burst_allowance` requests within any sliding window of `window_seconds`.
+  4. Implement `remaining_quota(client_id: str, timestamp: float) -> int` returning how many requests the client can still make at `timestamp`.
+  Run `pytest -v` and ensure all tests in `test_limiter.py` pass.
+workspace_source: "tasks/sample_repos/rate_limiter"
+expected_subagents:
+  - planner
+  - coder
+  - verifier
+verifiers:
+  - id: unit_tests
+    name: "Pytest Sliding Window Suite"
+    type: pytest_pass
+    command: "pytest -v"
+    weight: 2.0
+    required: true
+    timeout_seconds: 30
+  - id: no_todo_left
+    name: "No NotImplementedError remaining in limiter.py"
+    type: file_not_contains_regex
+    target_path: "limiter.py"
+    pattern: "NotImplementedError"
+    weight: 1.0
+    required: true
+    timeout_seconds: 10
+tags:
+  - python
+  - algorithms
+  - feature
+env_vars: {}

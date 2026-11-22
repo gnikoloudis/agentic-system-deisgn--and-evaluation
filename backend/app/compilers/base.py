@@ -1,0 +1,274 @@
+"""Base HarnessAdapter, User-Configurable Per-Harness Model Registry, and Dual-Mode Prompt Routing Contract generator."""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+import json
+import shutil
+import subprocess
+from typing import Any, Dict, List, Optional, Union
+
+from app.config import DATA_DIR, ensure_directories, settings
+from app.schemas.blueprint import (
+    AgentArchitecture,
+    CompilationResult,
+    CompiledFile,
+    HarnessType,
+    OrchestratorSpec,
+    SubagentSpec,
+)
+
+HARNESS_MODELS_PATH = DATA_DIR / "harness_models.json"
+
+DEFAULT_MODEL_TIER_MAP: Dict[HarnessType, Dict[str, str]] = {
+    "claude_code": {
+        "default": "claude-sonnet-4-20250514",
+        "reasoning": "claude-opus-4-20250514",
+        "coding": "claude-sonnet-4-20250514",
+        "fast": "claude-3-5-haiku-latest",
+    },
+    "antigravity": {
+        "default": "gemini-4-argon-medium",
+        "reasoning": "gemini-4-neon-high",
+        "coding": "gemini-4-argon-high",
+        "fast": "gemini-3.8-flash-medium",
+    },
+    "opencode": {
+        "default": "opencode/big-pickle",
+        "reasoning": "opencode/nemotron-3.5-super-vl-free",
+        "coding": "opencode/big-pickle",
+        "fast": "opencode/deepseek-v4.1-flash-free",
+    },
+}
+
+DEFAULT_NATIVE_MODELS: Dict[HarnessType, List[Dict[str, str]]] = {
+    "claude_code": [
+        {"id": "claude-sonnet-4-20250514", "label": "Claude Sonnet 4 (Balanced Coding & Orchestration)", "tier": "coding"},
+        {"id": "claude-opus-4-20250514", "label": "Claude Opus 4 (Deep Architecture & Reasoning)", "tier": "reasoning"},
+        {"id": "claude-3-7-sonnet-latest", "label": "Claude 3.7 Sonnet (Extended Thinking)", "tier": "coding"},
+        {"id": "claude-3-5-haiku-latest", "label": "Claude 3.5 Haiku (Low-Latency QA & Verifier)", "tier": "fast"},
+    ],
+    "antigravity": [
+        {"id": "gemini-4-argon-medium", "label": "Gemini 4 Argon (Medium) — Default Balanced", "tier": "default"},
+        {"id": "gemini-4-argon-high", "label": "Gemini 4 Argon (High) — High-Precision Coding", "tier": "coding"},
+        {"id": "gemini-4-argon-low", "label": "Gemini 4 Argon (Low) — Fast Execution", "tier": "fast"},
+        {"id": "gemini-4-neon-high", "label": "Gemini 4 Neon (High) — Deep Reasoning & Planning", "tier": "reasoning"},
+        {"id": "gemini-4-neon-xhigh", "label": "Gemini 4 Neon (XHigh) — Max Reasoning Effort", "tier": "reasoning"},
+        {"id": "gemini-4-neon-medium", "label": "Gemini 4 Neon (Medium)", "tier": "coding"},
+        {"id": "gemini-4-hydrogen-high", "label": "Gemini 4 Hydrogen (High)", "tier": "reasoning"},
+        {"id": "gemini-4-hydrogen-medium", "label": "Gemini 4 Hydrogen (Medium)", "tier": "coding"},
+        {"id": "gemini-pro-orchestrator-neon", "label": "Orchestrator (Neon) — Multi-Agent Coordinator", "tier": "default"},
+        {"id": "gemini-pro-orchestrator-g1-pro", "label": "Orchestrator (Argon) — Multi-Agent Coordinator", "tier": "default"},
+        {"id": "gemini-3.8-flash-high", "label": "Gemini 3.8 Flash (High) — Fast QA Verifier", "tier": "fast"},
+        {"id": "gemini-3.8-flash-medium", "label": "Gemini 3.8 Flash (Medium) — Low-Cost Critic", "tier": "fast"},
+        {"id": "gemini-3.8-flash-low", "label": "Gemini 3.8 Flash (Low)", "tier": "fast"},
+        {"id": "claude-opus-5-5-high", "label": "Claude Opus 5.5 (High)", "tier": "reasoning"},
+        {"id": "claude-opus-5-5-medium", "label": "Claude Opus 5.5 (Medium)", "tier": "reasoning"},
+        {"id": "claude-sonnet-5-5-high", "label": "Claude Sonnet 5.5 (High)", "tier": "coding"},
+        {"id": "claude-sonnet-5-5-medium", "label": "Claude Sonnet 5.5 (Medium)", "tier": "coding"},
+        {"id": "gpt-oss-120b-medium", "label": "GPT-OSS 120B (Medium)", "tier": "coding"},
+        {"id": "inherit", "label": "inherit (Use Parent Session Model)", "tier": "default"},
+        {"id": "pro", "label": "pro (Antigravity Pro Subagent Tier)", "tier": "reasoning"},
+        {"id": "flash", "label": "flash (Antigravity Flash Subagent Tier)", "tier": "fast"},
+    ],
+    "opencode": [
+        {"id": "opencode/big-pickle", "label": "opencode/big-pickle (Primary Coding & Synthesis)", "tier": "coding"},
+        {"id": "opencode/nemotron-3.5-super-vl-free", "label": "opencode/nemotron-3.5-super-vl-free (Deep Reasoning)", "tier": "reasoning"},
+        {"id": "opencode/deepseek-v4.1-flash-free", "label": "opencode/deepseek-v4.1-flash-free (Fast QA & Verifier)", "tier": "fast"},
+        {"id": "opencode/mimo-v2.6-flash-free", "label": "opencode/mimo-v2.6-flash-free (Fast Flash)", "tier": "fast"},
+        {"id": "opencode/nemotron-3.5-lightning-free", "label": "opencode/nemotron-3.5-lightning-free (Low Latency)", "tier": "fast"},
+        {"id": "opencode/beam-free", "label": "opencode/beam-free", "tier": "coding"},
+        {"id": "opencode/flint-40b-free", "label": "opencode/flint-40b-free", "tier": "coding"},
+        {"id": "opencode/hy4-flash-free", "label": "opencode/hy4-flash-free", "tier": "fast"},
+        {"id": "opencode/iceman-free", "label": "opencode/iceman-free", "tier": "coding"},
+        {"id": "opencode/longcat-2.5-free", "label": "opencode/longcat-2.5-free", "tier": "coding"},
+        {"id": "opencode/tidepool-alpha-free", "label": "opencode/tidepool-alpha-free", "tier": "reasoning"},
+    ],
+}
+
+MODEL_BEST_PRACTICES: Dict[str, str] = {
+    "orchestrator": (
+        "Best Practice (Orchestrator): Use a balanced instruction-following model (`default` / `Orchestrator` / `Sonnet` / `Argon Medium`). "
+        "The root coordinator should focus on clean routing and delegation rather than burning heavy reasoning tokens."
+    ),
+    "reasoning": (
+        "Best Practice (`reasoning` tier — Planners, BA Discovery & Security Auditors): Assign your highest-reasoning model "
+        "(`Opus` / `Gemini 4 Neon High` / `Nemotron 3.5 Super`) to read-only discovery nodes that analyze complex requirements and edge cases."
+    ),
+    "coding": (
+        "Best Practice (`coding` tier — Coders, Workflow Architects & Story Authors): Assign a high-throughput generation model "
+        "(`Sonnet` / `Gemini 4 Argon High` / `opencode/big-pickle`) to nodes that author large code files or detailed specifications."
+    ),
+    "fast": (
+        "Best Practice (`fast` tier — QA Verifiers & Gatekeepers): Assign a fast, low-cost model (`Haiku` / `Gemini 3.8 Flash` / `DeepSeek Flash`) "
+        "to critic nodes that execute pytest and verify checklists—reducing multi-loop retry latency and cost by up to 65%."
+    ),
+}
+
+
+def get_harness_models_config() -> Dict[str, Any]:
+    """Load user-configurable per-harness model tier mappings and native model catalogs."""
+    ensure_directories()
+    if HARNESS_MODELS_PATH.exists():
+        try:
+            data = json.loads(HARNESS_MODELS_PATH.read_text(encoding="utf-8"))
+            if "tier_map" in data and "native_models" in data:
+                data["best_practices"] = MODEL_BEST_PRACTICES
+                return data
+        except Exception:
+            pass
+    default_payload = {
+        "tier_map": DEFAULT_MODEL_TIER_MAP,
+        "native_models": DEFAULT_NATIVE_MODELS,
+        "best_practices": MODEL_BEST_PRACTICES,
+    }
+    HARNESS_MODELS_PATH.write_text(json.dumps(default_payload, indent=2), encoding="utf-8")
+    return default_payload
+
+
+def save_harness_models_config(tier_map: Dict[str, Dict[str, str]], native_models: Dict[str, List[Dict[str, str]]]) -> Dict[str, Any]:
+    """Persist custom per-harness model tier mappings and model lists."""
+    ensure_directories()
+    payload = {
+        "tier_map": tier_map,
+        "native_models": native_models,
+        "best_practices": MODEL_BEST_PRACTICES,
+    }
+    HARNESS_MODELS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return payload
+
+
+def sync_models_from_installed_clis() -> Dict[str, Any]:
+    """Query `agy models` and `opencode models` on the host machine to auto-discover available models."""
+    cfg = get_harness_models_config()
+    native = cfg["native_models"]
+
+    # 1. Discover from `agy models`
+    agy_bin = shutil.which(settings.antigravity_binary)
+    if agy_bin:
+        try:
+            proc = subprocess.run([agy_bin, "models"], capture_output=True, text=True, timeout=8, encoding="utf-8")
+            if proc.returncode == 0:
+                existing_ids = {m["id"] for m in native.get("antigravity", [])}
+                for line in proc.stdout.splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("Fetching"):
+                        continue
+                    parts = line.split("\t")
+                    m_id = parts[0].strip()
+                    m_label = f"{parts[1].strip()} ({m_id})" if len(parts) > 1 else m_id
+                    if m_id and m_id not in existing_ids:
+                        tier_guess = "fast" if "flash" in m_id or "low" in m_id else ("reasoning" if "neon" in m_id or "opus" in m_id else "coding")
+                        native.setdefault("antigravity", []).append({"id": m_id, "label": m_label, "tier": tier_guess})
+                        existing_ids.add(m_id)
+        except Exception:
+            pass
+
+    # 2. Discover from `opencode models`
+    oc_bin = shutil.which(settings.opencode_binary)
+    if oc_bin:
+        try:
+            proc = subprocess.run([oc_bin, "models"], capture_output=True, text=True, timeout=8, encoding="utf-8")
+            if proc.returncode == 0:
+                existing_ids = {m["id"] for m in native.get("opencode", [])}
+                for line in proc.stdout.splitlines():
+                    m_id = line.strip()
+                    if m_id and "/" in m_id and m_id not in existing_ids:
+                        tier_guess = "fast" if "flash" in m_id or "lightning" in m_id else "coding"
+                        native.setdefault("opencode", []).append({"id": m_id, "label": m_id, "tier": tier_guess})
+                        existing_ids.add(m_id)
+        except Exception:
+            pass
+
+    return save_harness_models_config(cfg["tier_map"], native)
+
+
+class HarnessAdapter(ABC):
+    """Abstract base compiler for translating an AgentArchitecture into native harness files."""
+
+    harness_type: HarnessType
+
+    def resolve_model(self, model_tier_or_id: str, harness_overrides: Optional[Dict[str, str]] = None) -> str:
+        """Resolve an agent's model for this harness: checks explicit per-harness override first, then tier_map."""
+        if harness_overrides and self.harness_type in harness_overrides and harness_overrides[self.harness_type].strip():
+            return harness_overrides[self.harness_type].strip()
+        cfg = get_harness_models_config()
+        tier_map = cfg.get("tier_map", DEFAULT_MODEL_TIER_MAP).get(self.harness_type, {})
+        return tier_map.get(model_tier_or_id, model_tier_or_id)
+
+    def resolve_agent_model(self, agent_spec: Union[OrchestratorSpec, SubagentSpec]) -> str:
+        return self.resolve_model(agent_spec.model, getattr(agent_spec, "harness_models", None))
+
+    def render_routing_contract_markdown(self, bp: AgentArchitecture) -> str:
+        """Compile the visual graph topology, subagent roster, permissions, and hooks into an explicit routing contract."""
+        orch_resolved_model = self.resolve_agent_model(bp.orchestrator)
+        lines: List[str] = [
+            f"# Architecture Blueprint: {bp.metadata.name} (`{bp.metadata.id}` v{bp.metadata.version})",
+            "",
+            "## 1. Root Orchestrator Role & System Instructions",
+            f"- **Target Harness**: `{self.harness_type}` | **Orchestrator Model**: `{orch_resolved_model}` (Tier: `{bp.orchestrator.model}`)",
+            "",
+            bp.orchestrator.system_prompt.strip(),
+            "",
+            "## 2. Execution Budgets & Constraints",
+            f"- **Max Turns**: `{bp.orchestrator.budgets.max_turns}`",
+            f"- **Max Budget (USD)**: `${bp.orchestrator.budgets.max_cost_usd:.2f}`",
+            f"- **Timeout**: `{bp.orchestrator.budgets.timeout_seconds}s`",
+            f"- **Orchestrator Direct File Write Allowed**: `{bp.orchestrator.permissions.allow_write}`",
+            f"- **Orchestrator Direct Shell Execution Allowed**: `{bp.orchestrator.permissions.allow_shell}`",
+            "",
+        ]
+
+        if bp.subagents:
+            lines.append("## 3. Deployed Subagent Roster")
+            lines.append("| Subagent ID | Name | Role | Resolved Model | Write Allowed | Shell Allowed |")
+            lines.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
+            for sa in bp.subagents:
+                lines.append(
+                    f"| `{sa.id}` | {sa.name} | {sa.role} | `{self.resolve_agent_model(sa)}` "
+                    f"| `{sa.permissions.allow_write}` | `{sa.permissions.allow_shell}` |"
+                )
+            lines.append("")
+
+        if bp.topology.edges:
+            lines.append(
+                f"## 4. Mandatory Workflow Topology (`{bp.topology.pattern}` — Enforcement: `{bp.topology.enforcement_mode}`)"
+            )
+            lines.append(
+                "You MUST adhere to the following directed transition sequence when delegating across subagents and skills:"
+            )
+            sorted_edges = sorted(bp.topology.edges, key=lambda e: e.order)
+            for edge in sorted_edges:
+                req_badge = "REQUIRED" if edge.required else "CONDITIONAL"
+                lines.append(
+                    f"{edge.order}. **`{edge.source}` -> `{edge.target}`** [{req_badge}] "
+                    f"— *Trigger*: {edge.condition} (Max loops: `{edge.max_loops}`)"
+                )
+            lines.append("")
+
+        if bp.skills:
+            lines.append("## 5. Available Skills & Workflows")
+            for sk in bp.skills:
+                cmd = f" (`{sk.trigger_command}`)" if sk.trigger_command else ""
+                lines.append(f"- **`{sk.id}`**{cmd}: {sk.description}")
+            lines.append("")
+
+        if bp.hooks:
+            lines.append("## 6. Active Runtime Guardrail Hooks")
+            for hk in bp.hooks:
+                lines.append(
+                    f"- **`{hk.id}`** (`{hk.event}` matching `{hk.matcher}` on `{hk.target_agent}` -> `{hk.action}`): {hk.message}"
+                )
+            lines.append("")
+
+        return "\n".join(lines)
+
+    @abstractmethod
+    def compile(
+        self,
+        blueprint: AgentArchitecture,
+        run_id: str = "preview-run",
+        server_url: str = "http://127.0.0.1:8765",
+    ) -> CompilationResult:
+        """Compile blueprint into target harness files and CLI invocation commands."""
+        raise NotImplementedError

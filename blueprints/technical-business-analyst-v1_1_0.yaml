@@ -1,0 +1,326 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: technical-business-analyst-v1_1_0
+  name: Technical Business Analyst Practice (Discovery -> Workflows -> Epics/Stories <-> Dev-QA Gatekeeper)
+    (technical-business-analyst-v1_1_0)
+  version: 1.1.0
+  description: End-to-end Technical Business Analyst (TBA) multi-agent architecture for OpenCode, Claude
+    Code, and Antigravity. Elicits business requirements, models Mermaid workflows & delivery specs, authors
+    Wikipedia-standard Epics & User Stories (Connextra format, Ron Jeffries' 3 Cs, Bill Wake's INVEST,
+    and BDD Given/When/Then Acceptance Criteria bridging Development and Testing), and audits traceability.
+  tags:
+  - business-analysis
+  - user-stories
+  - invest
+  - dev-qa-contract
+  - workflows
+  - opencode
+  author: HarnessForge Presets
+orchestrator:
+  id: root_orchestrator
+  name: George TBA
+  role: Coordinates requirements elicitation, workflow modeling, user story authoring (Dev-QA interface),
+    and INVEST quality review
+  model: fast
+  harness_models: {}
+  system_prompt: "You are the Lead Technical Business Analyst governing the bridge between Business Stakeholders,\
+    \ the Development Team, and the Testing (QA) Team.\nYou MUST NOT write delivery specification files\
+    \ directly. Instead, orchestrate the 4 specialist subagents in strict sequence:\n1. Delegate to `requirements_elicitor`\
+    \ to analyze all stakeholder notes/documents and catalog Business Requirements (`BR-xxx`), Actor Personas,\
+    \ Domain Rules, and Non-Functional Requirements (`NFR-xxx`).\n2. Delegate to `workflow_architect`\
+    \ to create `WORKFLOWS_AND_DELIVERY_DOCS.md` containing Mermaid process flowcharts, sequence diagrams,\
+    \ state lifecycle diagrams, data dictionary, and API/integration contracts.\n3. Delegate to `user_story_author`\
+    \ to create `EPICS_AND_USER_STORIES.md` following the Wikipedia User Story standard (`https://en.wikipedia.org/wiki/User_story`):\n\
+    \   - Connextra template (\"As a <persona>, I want <goal>, so that <benefit>\")\n   - Ron Jeffries'\
+    \ 3 Cs: **Card** (ID, Epic, Priority, Story Points), **Conversation** (Technical implementation rules\
+    \ & data constraints for Developers), and **Confirmation** (BDD `Given / When / Then` Acceptance Criteria\
+    \ & mapped `TC-xxx` Test Cases for QA Testing)\n   - Bill Wake's **INVEST** checklist (Independent,\
+    \ Negotiable, Valuable, Estimable, Small, Testable)\n   - Definition of Ready (DoR), Definition of\
+    \ Done (DoD), and Requirements Traceability Matrix (RTM).\n4. Delegate to `ba_qa_gatekeeper` to verify\
+    \ both documents against the Wikipedia User Story standard and run `pytest -v`. If `VERDICT: FAIL`,\
+    \ loop back to `user_story_author` (up to 3 retries).\n"
+  tools:
+  - read
+  - grep
+  - glob
+  - subagent
+  permissions:
+    allow_shell: true
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+  budgets:
+    max_turns: 45
+    max_cost_usd: 2.8
+    timeout_seconds: 600
+    context_compaction_threshold_pct: 80
+subagents:
+- id: requirements_elicitor
+  name: Requirements Discovery & Domain Analyst
+  role: Extracts structured Business Requirements (BR-xxx), Personas, Business Rules, and NFRs from stakeholder
+    transcripts
+  model: reasoning
+  harness_models: {}
+  system_prompt: "You are the Requirements Discovery & Domain Analyst (`requirements_elicitor`). You operate\
+    \ in read-only mode.\n1. Read all stakeholder interview notes, regulatory policies, and business context\
+    \ files in the workspace.\n2. Produce a structured Requirements Intake Inventory listing:\n   - Actor\
+    \ Personas & Roles\n   - Numbered Business Requirements (`BR-001`, `BR-002`, ...)\n   - Quantitative\
+    \ SLAs, thresholds, reason codes, and validation rules\n   - Non-Functional Requirements (`NFR-001`:\
+    \ Security, Auditability, Performance, Compliance).\n"
+  tools:
+  - read
+  - grep
+  - glob
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands: []
+  max_turns: 10
+- id: workflow_architect
+  name: Process & Workflow Architect
+  role: Authors WORKFLOWS_AND_DELIVERY_DOCS.md with Mermaid flowcharts, sequence diagrams, state machines,
+    and data dictionary
+  model: coding
+  harness_models: {}
+  system_prompt: 'You are the Process & Workflow Architect (`workflow_architect`).
+
+    Author `WORKFLOWS_AND_DELIVERY_DOCS.md` containing:
+
+    1. **End-to-End Business Process Workflow** (`flowchart TD` Mermaid diagram showing decision gates,
+    SLA timers, and approval thresholds).
+
+    2. **System & Actor Sequence Diagram** (`sequenceDiagram` Mermaid block showing interactions between
+    Customer, Portal UI, Dispute Engine, Payment Gateway, and Audit Log).
+
+    3. **Entity Lifecycle State Diagram** (`stateDiagram-v2` showing all valid state transitions and guard
+    conditions).
+
+    4. **Delivery Specification Documents**: Data Dictionary (fields, types, validation rules), Integration/API
+    Payload Contracts for Developers, and Operational Rollout Checklist.
+
+    '
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  permissions:
+    allow_shell: false
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands: []
+  max_turns: 15
+- id: user_story_author
+  name: Agile Epics & User Story Author (Dev-QA Bridge)
+  role: Authors EPICS_AND_USER_STORIES.md adhering to Wikipedia User Story standards (Connextra, 3 Cs,
+    INVEST, BDD Given/When/Then, RTM)
+  model: coding
+  harness_models: {}
+  system_prompt: "You are the Agile Epics & User Story Author (`user_story_author`).\nYour deliverable\
+    \ `EPICS_AND_USER_STORIES.md` is the formal contract between the **Development Team** and the **Testing\
+    \ (QA) Team**.\nFollow the Wikipedia User Story specification (`https://en.wikipedia.org/wiki/User_story`)\
+    \ rigorously:\n1. **Epics Catalog (`EPIC-01`, `EPIC-02`...)**: Business Objective, In-Scope / Out-of-Scope,\
+    \ Success Metrics, and Linked Business Requirements (`BR-xxx`).\n2. **User Stories (`US-101`, `US-102`...)**:\
+    \ Every story MUST include all 4 parts:\n   - **Part A — The Card (Connextra Template & Agile Metadata)**:\n\
+    \     `As a <specific persona>, I want <concrete capability>, so that <measurable business value>.`\n\
+    \     Include Story ID (`US-xxx`), Parent Epic (`EPIC-xx`), Priority (MoSCoW), Story Points (Fibonacci:\
+    \ 3, 5, 8), and Preconditions/Dependencies.\n   - **Part B — The Conversation (Development Team Interface)**:\n\
+    \     Explicit technical & domain rules, input validation constraints, calculation formulas, API/database\
+    \ state updates, and error handling codes required by Developers.\n   - **Part C — The Confirmation\
+    \ (Testing Team Interface / BDD Acceptance Criteria)**:\n     Testable scenarios written in strict\
+    \ **Gherkin (`Given ... When ... Then ...`)** syntax covering:\n     • Happy Path Scenario (`TC-xxx-01`)\n\
+    \     • Boundary / Threshold Scenario (`TC-xxx-02`)\n     • Negative / Validation Rejection Scenario\
+    \ (`TC-xxx-03`)\n   - **Part D — Bill Wake's INVEST Verification**:\n     Explicit evaluation of **I**ndependent,\
+    \ **N**egotiable, **V**aluable, **E**stimable, **S**mall, and **T**estable.\n3. **Definition of Ready\
+    \ (DoR) & Definition of Done (DoD)**: Shared checklists agreed by BA, Dev, and QA.\n4. **Requirements\
+    \ Traceability Matrix (RTM)**: Markdown table mapping `Business Requirement (BR-xxx)` -> `Epic (EPIC-xx)`\
+    \ -> `User Story (US-xxx)` -> `Dev Module/Workflow` -> `QA Test Case IDs (TC-xxx)`.\n"
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  permissions:
+    allow_shell: false
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands: []
+  max_turns: 18
+- id: ba_qa_gatekeeper
+  name: BA Quality & Dev-QA Traceability Gatekeeper
+  role: Audits User Stories and Workflows for 3Cs completeness, INVEST compliance, BDD testability, and
+    100% BR-to-TC traceability
+  model: fast
+  harness_models: {}
+  system_prompt: 'You are the BA Quality & Traceability Gatekeeper (`ba_qa_gatekeeper`). Never edit specification
+    files yourself.
+
+    1. Inspect `EPICS_AND_USER_STORIES.md` and `WORKFLOWS_AND_DELIVERY_DOCS.md`.
+
+    2. Verify every User Story contains the Connextra format, Ron Jeffries'' 3 Cs (Card, Conversation
+    for Dev, Confirmation with Given/When/Then & TC- IDs for QA), and Bill Wake''s INVEST checklist.
+
+    3. Run `pytest -v` to execute automated BA deliverable checks.
+
+    4. Output `VERDICT: PASS` only if all checks pass, or `VERDICT: FAIL` with specific missing items
+    for `user_story_author` or `workflow_architect`.
+
+    '
+  tools:
+  - read
+  - grep
+  - bash
+  permissions:
+    allow_shell: true
+    allow_write: false
+    allow_network: false
+    allowed_commands:
+    - pytest
+    - python -m pytest
+    blocked_commands: []
+  max_turns: 10
+skills:
+- id: wikipedia-user-story
+  name: Wikipedia User Story Standard (3Cs + INVEST + Dev-QA BDD Contract)
+  description: Template enforcing Connextra format, Ron Jeffries' 3 Cs (Card, Conversation, Confirmation),
+    Bill Wake's INVEST criteria, and Given/When/Then QA test scenarios
+  instructions: "For every User Story (`US-xxx`), enforce this structure:\n### US-xxx: <Title>\n- **Card\
+    \ (Connextra Statement)**: As a <role>, I want <feature>, so that <benefit>.\n- **Card Metadata**:\
+    \ Epic: `EPIC-xx` | Priority: Must-Have | Estimate: 5 Story Points | Source BR: `BR-xxx`\n- **Conversation\
+    \ (For Development Team)**: Domain rules, field validations, API endpoints, state transitions, and\
+    \ security/audit rules.\n- **Confirmation (For Testing Team — BDD Acceptance Criteria)**:\n  - `TC-xxx-01`\
+    \ (Happy Path): **Given** <context>, **When** <action>, **Then** <expected outcome>.\n  - `TC-xxx-02`\
+    \ (Edge/Boundary): **Given** <boundary>, **When** <action>, **Then** <expected outcome>.\n  - `TC-xxx-03`\
+    \ (Negative/Error): **Given** <invalid input>, **When** <action>, **Then** <error response>.\n- **INVEST\
+    \ Audit**: Independent | Negotiable | Valuable | Estimable | Small | Testable\n"
+  trigger_command: /wikipedia-user-story
+- id: delivery-rtm-pack
+  name: BA Delivery Pack & Requirements Traceability Matrix (RTM)
+  description: Checklist for Mermaid Workflows, Data Dictionary, DoR/DoD, and BR -> Epic -> Story -> QA
+    Test Case RTM
+  instructions: 'Ensure delivery documentation includes:
+
+    1. Mermaid Process Flowchart (`flowchart TD`), Sequence Diagram (`sequenceDiagram`), and State Diagram
+    (`stateDiagram-v2`).
+
+    2. Data Dictionary with exact field names, data types, constraints, and error codes.
+
+    3. Definition of Ready (DoR) and Definition of Done (DoD).
+
+    4. Full Requirements Traceability Matrix (RTM) linking `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `TC-xxx`.
+
+    '
+  trigger_command: /delivery-rtm-pack
+hooks:
+- id: enforce_ba_delegation
+  event: PreToolUse
+  matcher: Write|Edit
+  target_agent: root_orchestrator
+  action: block
+  command: null
+  message: Lead Technical Business Analyst must delegate specification writing to `workflow_architect`
+    and `user_story_author`.
+- id: enforce_subagent_delegation
+  event: PreToolUse
+  matcher: Write|Edit
+  target_agent: root_orchestrator
+  action: block
+  command: null
+  message: Root orchestrator must delegate file modifications to specialized coding subagents.
+mcp_servers: []
+topology:
+  pattern: generator-verifier-loop
+  enforcement_mode: dual
+  entry_node: root_orchestrator
+  edges:
+  - id: e1_elicit_requirements
+    source: root_orchestrator
+    target: requirements_elicitor
+    condition: 'Step 1: Elicit Business Requirements (BRs), Personas & NFRs'
+    order: 1
+    required: true
+    max_loops: 1
+  - id: e2_model_workflows
+    source: requirements_elicitor
+    target: workflow_architect
+    condition: 'Step 2: Author WORKFLOWS_AND_DELIVERY_DOCS.md (Mermaid + Data Dictionary)'
+    order: 2
+    required: true
+    max_loops: 1
+  - id: e3_author_stories
+    source: workflow_architect
+    target: user_story_author
+    condition: 'Step 3: Author EPICS_AND_USER_STORIES.md (3Cs + INVEST + Dev-QA BDD + RTM)'
+    order: 3
+    required: true
+    max_loops: 1
+  - id: e4_audit_ba_pack
+    source: user_story_author
+    target: ba_qa_gatekeeper
+    condition: 'Step 4: Audit Wikipedia User Story standard, INVEST & Dev-QA Traceability'
+    order: 4
+    required: true
+    max_loops: 3
+  - id: e5_story_revision_loop
+    source: ba_qa_gatekeeper
+    target: user_story_author
+    condition: If VERDICT == FAIL (Revision loop <= 3)
+    order: 5
+    required: false
+    max_loops: 3
+  - id: e_skill_wikipedia_story
+    source: user_story_author
+    target: wikipedia-user-story
+    condition: Applies /wikipedia-user-story template (3Cs + INVEST + BDD)
+    order: 6
+    required: false
+    max_loops: 1
+  - id: e_skill_delivery_rtm
+    source: workflow_architect
+    target: delivery-rtm-pack
+    condition: Applies /delivery-rtm-pack workflow & Data Dictionary standard
+    order: 7
+    required: false
+    max_loops: 1
+  - id: e_skill_qa_audit
+    source: ba_qa_gatekeeper
+    target: wikipedia-user-story
+    condition: Verifies stories against /wikipedia-user-story checklist
+    order: 8
+    required: false
+    max_loops: 1
+visual_layout:
+  nodes:
+    root_orchestrator:
+      x: -62.0
+      y: -159.0
+    requirements_elicitor:
+      x: -78.0
+      y: 167.0
+    workflow_architect:
+      x: -21.0
+      y: 516.0
+    user_story_author:
+      x: 401.0
+      y: 42.0
+    ba_qa_gatekeeper:
+      x: 1032.0
+      y: 112.0
+    wikipedia-user-story:
+      x: 849.0
+      y: 445.0
+    delivery-rtm-pack:
+      x: 589.0
+      y: 704.0
+    enforce_ba_delegation:
+      x: 1026.0
+      y: -159.0

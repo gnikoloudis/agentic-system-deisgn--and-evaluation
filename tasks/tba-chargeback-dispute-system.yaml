@@ -1,0 +1,69 @@
+api_version: harnessforge/v1
+kind: TaskSpec
+id: tba-chargeback-dispute-system
+name: "Technical BA Delivery Pack: FinTech Card Chargeback & Dispute Resolution Portal"
+category: business-analysis
+difficulty: medium
+description: "Evaluates a Technical Business Analyst architecture on transforming unstructured stakeholder interview transcripts into a complete delivery package: (1) Epics & Wikipedia-standard User Stories (`EPICS_AND_USER_STORIES.md`) with Connextra format, Ron Jeffries' 3 Cs bridging Development & Testing, Bill Wake's INVEST checklist, BDD Given/When/Then Test Cases, DoR/DoD, and Traceability Matrix; and (2) Process Workflows & Delivery Specs (`WORKFLOWS_AND_DELIVERY_DOCS.md`)."
+prompt: |
+  You are the Technical Business Analyst team assigned to the **FinTech Card Chargeback & Dispute Resolution Portal** initiative.
+  1. Read the stakeholder interview transcripts and regulatory constraints in `stakeholder_interview_notes.md`.
+  2. Author `WORKFLOWS_AND_DELIVERY_DOCS.md` containing:
+     - **End-to-End Business Process Workflow** (`flowchart TD` Mermaid diagram)
+     - **System & Actor Interaction Sequence Diagram** (`sequenceDiagram` Mermaid diagram)
+     - **Dispute Case Lifecycle State Diagram** (`stateDiagram-v2` Mermaid diagram)
+     - **Data Dictionary & Integration/API Contract** for the Development Team (covering the 60-day transaction window, $25 auto-refund threshold, $500 supervisor approval gate, PDF/PNG evidence upload <= 10MB, and 45-day network SLA timer).
+  3. Author `EPICS_AND_USER_STORIES.md` as the formal interface between the **Development Team** and the **Testing (QA) Team**, including all required User Story & Epic specifications:
+     - **Epics Breakdown (`EPIC-01`, `EPIC-02`, `EPIC-03`)** traced to Business Requirements (`BR-001`..`BR-005`).
+     - **User Stories (`US-101`..`US-104`)** where every story includes:
+       1. **Card**: Connextra statement (`As a <role>, I want <feature>, so that <benefit>`), Story ID, Epic link, Priority, Story Points, and Dependencies.
+       2. **Conversation (Development Team Interface)**: Exact functional rules, field validations, threshold logic, API/DB updates, and error handling.
+       3. **Confirmation (Testing Team Interface)**: Testable BDD Gherkin (`Given ... When ... Then ...`) Acceptance Criteria with mapped QA Test Case IDs (`TC-101-01`, `TC-101-02`, etc.) covering Happy Path, Boundary Conditions ($25 and $500 thresholds, 60-day window, 10MB file limit), and Negative Scenarios.
+       4. **INVEST Verification Checklist**: Explicit evaluation of *Independent, Negotiable, Valuable, Estimable, Small, Testable*.
+     - **Definition of Ready (DoR) & Definition of Done (DoD)**.
+     - **Requirements Traceability Matrix (RTM)** mapping `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `Dev Component` -> `QA Test Case (TC-xxx)`.
+  4. Run `pytest -v` to confirm all BA specification and Dev-QA contract verifiers pass.
+workspace_source: "tasks/sample_repos/tba_stakeholder_intake"
+expected_subagents:
+  - requirements_elicitor
+  - workflow_architect
+  - user_story_author
+  - ba_qa_gatekeeper
+verifiers:
+  - id: wikipedia_user_story_invest
+    name: "Wikipedia User Story Standard (Connextra + 3Cs Dev/QA + INVEST + DoR/DoD)"
+    type: user_story_invest_check
+    target_path: "EPICS_AND_USER_STORIES.md"
+    weight: 2.5
+    required: true
+    timeout_seconds: 15
+  - id: required_ba_sections
+    name: "Required BA Sections & Traceability Matrix Present"
+    type: markdown_sections_present
+    target_path: "EPICS_AND_USER_STORIES.md"
+    pattern: "Epics,User Stories,Conversation,Confirmation,INVEST,Definition of Ready,Definition of Done,Traceability Matrix"
+    weight: 1.5
+    required: true
+    timeout_seconds: 15
+  - id: workflow_mermaid_diagrams
+    name: "Valid Mermaid Process Workflows & State Diagrams Delivered"
+    type: mermaid_diagram_valid
+    target_path: "WORKFLOWS_AND_DELIVERY_DOCS.md"
+    weight: 1.5
+    required: true
+    timeout_seconds: 15
+  - id: pytest_ba_suite
+    name: "Domain Rules & Stakeholder Requirement Coverage Suite (pytest)"
+    type: pytest_pass
+    command: "pytest -v"
+    weight: 1.5
+    required: true
+    timeout_seconds: 30
+tags:
+  - business-analysis
+  - user-stories
+  - invest
+  - bdd
+  - workflows
+  - opencode
+env_vars: {}

@@ -1,0 +1,3071 @@
+import React, { useEffect, useState, useCallback } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowRight,
+  BarChart3,
+  Bot,
+  CheckCircle2,
+  Code2,
+  Cpu,
+  FileCode2,
+  FolderOutput,
+  GitCompare,
+  Layers,
+  Pencil,
+  Play,
+  Plus,
+  RefreshCw,
+  Save,
+  ShieldAlert,
+  Sparkles,
+  Terminal,
+  Trash2,
+  Wand2,
+  XCircle,
+} from "lucide-react";
+import { api } from "./api";
+import { ArchitectureCanvas } from "./components/ArchitectureCanvas";
+import type {
+  ABComparisonResponse,
+  AdvisorSuggestion,
+  AgentArchitecture,
+  CompilationResult,
+  HarnessModelsConfig,
+  HarnessType,
+  RunMode,
+  RunRecord,
+  SubagentSpec,
+  TaskSpec,
+  TelemetryEvent,
+} from "./types";
+
+type ActiveTab = "studio" | "tasks" | "runner" | "evaluation" | "compare" | "advisor";
+
+const HARNESS_LABELS: Record<HarnessType, { name: string; badge: string }> = {
+  claude_code: { name: "Claude Code", badge: "CLAUDE.md + .claude/agents" },
+  antigravity: { name: "Antigravity (AGY)", badge: ".agent/rules + .agent/agents" },
+  opencode: { name: "OpenCode", badge: "AGENTS.md + opencode.json" },
+};
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState<ActiveTab>("studio");
+  const [blueprints, setBlueprints] = useState<AgentArchitecture[]>([]);
+  const [selectedBlueprint, setSelectedBlueprint] = useState<AgentArchitecture | null>(null);
+  const [rawYaml, setRawYaml] = useState<string>("");
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>("root_orchestrator");
+  const [studioRightPanel, setStudioRightPanel] = useState<
+    "inspector" | "yaml" | "compiled" | "models"
+  >("inspector");
+
+  const [previewHarness, setPreviewHarness] = useState<HarnessType>("claude_code");
+  const [harnessModels, setHarnessModels] = useState<HarnessModelsConfig | null>(null);
+  const [newCustomModelId, setNewCustomModelId] = useState<string>("");
+  const [newCustomModelLabel, setNewCustomModelLabel] = useState<string>("");
+  const [renamingBlueprintId, setRenamingBlueprintId] = useState<string | null>(null);
+  const [renamingBlueprintTitle, setRenamingBlueprintTitle] = useState<string>("");
+  const [compiledResult, setCompiledResult] = useState<CompilationResult | null>(null);
+  const [selectedCompiledFileIdx, setSelectedCompiledFileIdx] = useState<number>(0);
+  const [exportDir, setExportDir] = useState<string>("tba_opencode_workspace");
+  const [externalDocsDir, setExternalDocsDir] = useState<string>("test_application_docs");
+  const [deploymentReceipt, setDeploymentReceipt] = useState<{
+    run_id: string;
+    target_directory: string;
+    docs_directory?: string | null;
+    discovered_docs: string[];
+    installed_agents: string[];
+    installed_commands: string[];
+  } | null>(null);
+  const [statusBanner, setStatusBanner] = useState<{ type: "ok" | "err"; text: string } | null>(null);
+
+  // Tasks state
+  const [tasks, setTasks] = useState<TaskSpec[]>([]);
+  const [selectedTask, setSelectedTask] = useState<TaskSpec | null>(null);
+  const [taskYaml, setTaskYaml] = useState<string>("");
+
+  // Runner & Telemetry state
+  const [runHarness, setRunHarness] = useState<HarnessType>("claude_code");
+  const [runMode, setRunMode] = useState<RunMode>("simulated_benchmark");
+  const [harnessStatus, setHarnessStatus] = useState<Record<string, { available: boolean; binary: string }>>({});
+  const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [activeRun, setActiveRun] = useState<RunRecord | null>(null);
+  const [telemetryEvents, setTelemetryEvents] = useState<TelemetryEvent[]>([]);
+  const [activeAgentNode, setActiveAgentNode] = useState<string | null>(null);
+  const [isLaunchingRun, setIsLaunchingRun] = useState(false);
+  const [traceViewMode, setTraceViewMode] = useState<"cards" | "console_log">("cards");
+  const [plainTextLog, setPlainTextLog] = useState<string>("");
+
+  // A/B Compare & Advisor state
+  const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [abResult, setAbResult] = useState<ABComparisonResponse | null>(null);
+  const [advisorSuggestion, setAdvisorSuggestion] = useState<AdvisorSuggestion | null>(null);
+  const [isLoadingAdvisor, setIsLoadingAdvisor] = useState(false);
+  const [humanRating, setHumanRating] = useState<number>(5);
+  const [humanNotes, setHumanNotes] = useState<string>("");
+
+  const notify = (text: string, type: "ok" | "err" = "ok") => {
+    setStatusBanner({ type, text });
+    setTimeout(() => setStatusBanner(null), 4500);
+  };
+
+  const loadInitialData = useCallback(async () => {
+    try {
+      const [bps, tks, rns, hStatus, hModels] = await Promise.all([
+        api.listBlueprints(),
+        api.listTasks(),
+        api.listRuns(),
+        api.getHarnessStatus(),
+        api.getHarnessModels(),
+      ]);
+      setBlueprints(bps);
+      setTasks(tks);
+      setRuns(rns);
+      setHarnessStatus(hStatus);
+      setHarnessModels(hModels);
+
+      if (bps.length > 0 && !selectedBlueprint) {
+        const defaultBp = bps.find((b) => b.metadata.id === "planner-coder-verifier") || bps[0];
+        const full = await api.getBlueprint(defaultBp.metadata.id);
+        setSelectedBlueprint(full.blueprint);
+        setRawYaml(full.raw_yaml);
+      }
+      if (tks.length > 0 && !selectedTask) {
+        const fullTask = await api.getTask(tks[0].id);
+        setSelectedTask(fullTask.task);
+        setTaskYaml(fullTask.raw_yaml);
+      }
+      if (rns.length > 0 && !activeRun) {
+        setActiveRun(rns[0]);
+        setCompareIds(rns.slice(0, 2).map((r) => r.id));
+      }
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to connect to backend", "err");
+    }
+  }, [selectedBlueprint, selectedTask, activeRun]);
+
+  useEffect(() => {
+    loadInitialData();
+  }, [loadInitialData]);
+
+  // Refresh compiled preview whenever selected blueprint or target harness changes
+  useEffect(() => {
+    if (!selectedBlueprint) return;
+    api
+      .compilePreview(selectedBlueprint.metadata.id, previewHarness)
+      .then((res) => {
+        setCompiledResult(res);
+        setSelectedCompiledFileIdx(0);
+      })
+      .catch(() => { });
+  }, [selectedBlueprint, previewHarness]);
+
+  // Load telemetry events when activeRun changes
+  useEffect(() => {
+    if (!activeRun) return;
+    api.getTelemetryEvents(activeRun.id).then((evts) => {
+      setTelemetryEvents(evts);
+      const lastAgent = [...evts].reverse().find((e) => e.agent_id)?.agent_id || null;
+      setActiveAgentNode(lastAgent);
+    });
+    api.getRunLog(activeRun.id).then((res) => setPlainTextLog(res.log)).catch(() => { });
+  }, [activeRun]);
+
+  const handleSelectBlueprint = async (id: string) => {
+    try {
+      const res = await api.getBlueprint(id);
+      setSelectedBlueprint(res.blueprint);
+      setRawYaml(res.raw_yaml);
+      setSelectedNodeId(res.blueprint.orchestrator.id);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Error loading blueprint", "err");
+    }
+  };
+
+  const handleCanvasBlueprintChange = async (updated: AgentArchitecture) => {
+    setSelectedBlueprint(updated);
+    try {
+      const synced = await api.convertYaml({ blueprint: updated });
+      setRawYaml(synced.raw_yaml);
+    } catch {
+      // keep local state if intermediate edit
+    }
+  };
+
+  const handleSaveBlueprint = async (useRawYaml = false) => {
+    try {
+      const payload = useRawYaml ? { raw_yaml: rawYaml } : { blueprint: selectedBlueprint! };
+      const saved = await api.saveBlueprint(payload);
+      setSelectedBlueprint(saved.blueprint);
+      setRawYaml(saved.raw_yaml);
+      const bps = await api.listBlueprints();
+      setBlueprints(bps);
+      const comp = await api.compilePreview(saved.blueprint.metadata.id, previewHarness);
+      setCompiledResult(comp);
+      notify(`Saved blueprint '${saved.blueprint.metadata.name}' (v${saved.blueprint.metadata.version})`);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to save blueprint", "err");
+    }
+  };
+
+  const handleAddSubagent = () => {
+    if (!selectedBlueprint) return;
+    const nextIdx = selectedBlueprint.subagents.length + 1;
+    const newId = `specialist_${nextIdx}`;
+    const newSubagent: SubagentSpec = {
+      id: newId,
+      name: `Specialist Agent ${nextIdx}`,
+      role: "Handles specialized subtask delegated by the orchestrator",
+      model: "coding",
+      system_prompt: `You are ${newId}. Execute your delegated responsibility cleanly and return a concise summary.`,
+      tools: ["read", "write", "edit", "grep", "glob", "bash"],
+      permissions: {
+        allow_shell: true,
+        allow_write: true,
+        allow_network: false,
+        allowed_commands: [],
+        blocked_commands: ["rm -rf /"],
+      },
+      max_turns: 15,
+    };
+    const nextOrder = selectedBlueprint.topology.edges.length + 1;
+    const updated: AgentArchitecture = {
+      ...selectedBlueprint,
+      subagents: [...selectedBlueprint.subagents, newSubagent],
+      topology: {
+        ...selectedBlueprint.topology,
+        edges: [
+          ...selectedBlueprint.topology.edges,
+          {
+            id: `e_${newId}`,
+            source: selectedBlueprint.orchestrator.id,
+            target: newId,
+            condition: `Step ${nextOrder}: Delegate to ${newId}`,
+            order: nextOrder,
+            required: true,
+            max_loops: 1,
+          },
+        ],
+      },
+      visual_layout: {
+        nodes: {
+          ...selectedBlueprint.visual_layout.nodes,
+          [newId]: { x: 140 + selectedBlueprint.subagents.length * 260, y: 240 },
+        },
+      },
+    };
+    handleCanvasBlueprintChange(updated);
+    setSelectedNodeId(newId);
+  };
+
+  const handleAddGuardrailHook = () => {
+    if (!selectedBlueprint) return;
+    const newId = `hook_guard_${selectedBlueprint.hooks.length + 1}`;
+    const updated: AgentArchitecture = {
+      ...selectedBlueprint,
+      hooks: [
+        ...selectedBlueprint.hooks,
+        {
+          id: newId,
+          event: "PreToolUse",
+          matcher: "Write|Edit",
+          target_agent: "root_orchestrator",
+          action: "block",
+          message: "Root orchestrator must delegate code modifications to coding subagents.",
+        },
+      ],
+      visual_layout: {
+        nodes: {
+          ...selectedBlueprint.visual_layout.nodes,
+          [newId]: { x: 680, y: 60 + selectedBlueprint.hooks.length * 140 },
+        },
+      },
+    };
+    handleCanvasBlueprintChange(updated);
+    setSelectedNodeId(newId);
+  };
+
+  const handleAddSkill = () => {
+    if (!selectedBlueprint) return;
+    const nextIdx = selectedBlueprint.skills.length + 1;
+    const newId = `ba-template-${nextIdx}`;
+    const updated: AgentArchitecture = {
+      ...selectedBlueprint,
+      skills: [
+        ...selectedBlueprint.skills,
+        {
+          id: newId,
+          name: `Custom BA Template ${nextIdx}`,
+          description: "Custom document template or domain checklist for subagents",
+          trigger_command: `/${newId}`,
+          instructions: "1. Follow custom structure.\n2. Include acceptance criteria and traceability.",
+        },
+      ],
+      visual_layout: {
+        nodes: {
+          ...selectedBlueprint.visual_layout.nodes,
+          [newId]: { x: 180 + selectedBlueprint.skills.length * 260, y: 440 },
+        },
+      },
+    };
+    handleCanvasBlueprintChange(updated);
+    setSelectedNodeId(newId);
+  };
+
+  const handleDuplicateBlueprint = async () => {
+    if (!selectedBlueprint) return;
+    const customId = `${selectedBlueprint.metadata.id}-custom`;
+    const cloned: AgentArchitecture = {
+      ...selectedBlueprint,
+      metadata: {
+        ...selectedBlueprint.metadata,
+        id: customId,
+        name: `${selectedBlueprint.metadata.name} (Custom)`,
+        version: "1.0.0",
+      },
+    };
+    const saved = await api.saveBlueprint({ blueprint: cloned });
+    setSelectedBlueprint(saved.blueprint);
+    setRawYaml(saved.raw_yaml);
+    setBlueprints(await api.listBlueprints());
+    notify(`Created editable custom blueprint '${customId}'!`);
+  };
+
+  const handleStartRun = async () => {
+    if (!selectedBlueprint || !selectedTask) return;
+    setIsLaunchingRun(true);
+    try {
+      await handleSaveBlueprint(false);
+      const started = await api.startRun({
+        architecture_id: selectedBlueprint.metadata.id,
+        task_id: selectedTask.id,
+        harness: runHarness,
+        mode: runMode,
+        auto_evaluate: true,
+      });
+      setActiveRun(started);
+      setActiveTab("runner");
+      setTelemetryEvents([]);
+
+      // Poll live events & status until completion
+      const pollInterval = setInterval(async () => {
+        try {
+          const [evts, currentRun, logRes] = await Promise.all([
+            api.getTelemetryEvents(started.id),
+            api.getRun(started.id),
+            api.getRunLog(started.id),
+          ]);
+          setTelemetryEvents(evts);
+          setPlainTextLog(logRes.log);
+          if (evts.length > 0) {
+            setActiveAgentNode(evts[evts.length - 1].agent_id);
+          }
+          setActiveRun(currentRun);
+          if (
+            currentRun.status === "completed" ||
+            currentRun.status === "failed" ||
+            currentRun.status === "waiting_for_user"
+          ) {
+            clearInterval(pollInterval);
+            const allRuns = await api.listRuns();
+            setRuns(allRuns);
+            if (currentRun.status === "completed") {
+              notify(`Run ${currentRun.id} completed! Score: ${currentRun.evaluation?.overall_composite_score ?? "--"}/100`);
+            }
+          }
+        } catch {
+          clearInterval(pollInterval);
+        }
+      }, 350);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to start run", "err");
+    } finally {
+      setIsLaunchingRun(false);
+    }
+  };
+
+  const handleCompleteInteractive = async () => {
+    if (!activeRun) return;
+    try {
+      const completed = await api.completeInteractiveRun(activeRun.id);
+      setActiveRun(completed);
+      const allRuns = await api.listRuns();
+      setRuns(allRuns);
+      notify(`Interactive session evaluated! Composite score: ${completed.evaluation?.overall_composite_score}/100`);
+      setActiveTab("evaluation");
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to complete session", "err");
+    }
+  };
+
+  const handleRunComparison = async () => {
+    if (compareIds.length === 0) return;
+    try {
+      const res = await api.compareRuns(compareIds);
+      setAbResult(res);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Comparison failed", "err");
+    }
+  };
+
+  const handleLoadAdvisor = async (regenerate = false) => {
+    if (!activeRun) return;
+    setIsLoadingAdvisor(true);
+    try {
+      const sug = await api.getAdvisorSuggestion(activeRun.id, regenerate);
+      setAdvisorSuggestion(sug);
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to generate advisor suggestion", "err");
+    } finally {
+      setIsLoadingAdvisor(false);
+    }
+  };
+
+  const handleApplyAdvisorPatch = async (saveAsNew: boolean) => {
+    if (!activeRun || !advisorSuggestion) return;
+    try {
+      const newId = saveAsNew
+        ? `${advisorSuggestion.architecture_id}-v${advisorSuggestion.proposed_version.replace(/\./g, "_")}`
+        : undefined;
+      const applied = await api.applyAdvisorSuggestion(activeRun.id, newId);
+      const bps = await api.listBlueprints();
+      setBlueprints(bps);
+      await handleSelectBlueprint(applied.metadata.id);
+      notify(`Applied AI Advisor v${applied.metadata.version} patch to '${applied.metadata.id}'!`);
+      setActiveTab("studio");
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to apply patch", "err");
+    }
+  };
+
+  // Helper to inspect currently selected node on the canvas
+  const selectedSubagent = selectedBlueprint?.subagents.find((s) => s.id === selectedNodeId);
+  const selectedSkill = selectedBlueprint?.skills.find((sk) => sk.id === selectedNodeId);
+  const selectedHook = selectedBlueprint?.hooks.find((h) => h.id === selectedNodeId);
+  const isOrchestratorSelected =
+    !selectedNodeId || selectedNodeId === selectedBlueprint?.orchestrator.id;
+
+  return (
+    <div className="min-h-screen h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
+      {/* Top Navigation Bar */}
+      <header className="h-14 border-b border-slate-800 bg-slate-900/90 px-4 flex items-center justify-between shrink-0">
+        <div className="flex items-center gap-3">
+          <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-indigo-500 to-cyan-500 flex items-center justify-center shadow-md shadow-indigo-500/20">
+            <Cpu className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-bold text-base tracking-tight text-white">HarnessForge</span>
+              <span className="text-[10px] font-semibold uppercase px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                Multi-Harness Studio
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Design, Deploy & Benchmark Agentic Architectures for Claude Code, Antigravity & OpenCode
+            </p>
+          </div>
+        </div>
+
+        {/* Navigation Tabs */}
+        <nav className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+          {[
+            { id: "studio", label: "1. Architecture Studio", icon: Layers },
+            { id: "tasks", label: "2. Benchmark Tasks", icon: FileCode2 },
+            { id: "runner", label: "3. Execute & Trace", icon: Play },
+            { id: "evaluation", label: "4. Evaluation Scorecard", icon: BarChart3 },
+            { id: "compare", label: "5. A/B Matrix", icon: GitCompare },
+            { id: "advisor", label: "6. AI Advisor (v2 Diff)", icon: Wand2 },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => {
+                  setActiveTab(tab.id as ActiveTab);
+                  if (tab.id === "compare") handleRunComparison();
+                  if (tab.id === "advisor" && activeRun) handleLoadAdvisor(false);
+                }}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer ${active
+                  ? "bg-indigo-600 text-white shadow-sm"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-900"
+                  }`}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {tab.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Quick Run Toolbar */}
+        <div className="flex items-center gap-2">
+          <select
+            value={runHarness}
+            onChange={(e) => {
+              const nextH = e.target.value as HarnessType;
+              setRunHarness(nextH);
+              setPreviewHarness(nextH);
+            }}
+            className="bg-slate-950 border border-indigo-500/70 rounded-lg px-2.5 py-1.5 text-xs text-cyan-300 font-semibold"
+          >
+            <option value="claude_code">Target: Claude Code</option>
+            <option value="antigravity">Target: Antigravity (AGY)</option>
+            <option value="opencode">Target: OpenCode</option>
+          </select>
+          <button
+            onClick={handleStartRun}
+            disabled={isLaunchingRun || !selectedBlueprint || !selectedTask}
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-xs shadow-sm cursor-pointer"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            {isLaunchingRun ? "Deploying..." : "Deploy & Evaluate"}
+          </button>
+        </div>
+      </header>
+
+      {/* Notification Banner */}
+      {statusBanner && (
+        <div
+          className={`px-4 py-2 text-xs font-medium flex items-center justify-between border-b ${statusBanner.type === "ok"
+            ? "bg-emerald-950/90 text-emerald-200 border-emerald-800"
+            : "bg-rose-950/90 text-rose-200 border-rose-800"
+            }`}
+        >
+          <span>{statusBanner.text}</span>
+          <button onClick={() => setStatusBanner(null)} className="text-slate-400 hover:text-white">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Main Content Area */}
+      <main className="flex-1 flex overflow-hidden">
+        {/* ==================== TAB 1: ARCHITECTURE STUDIO ==================== */}
+        {activeTab === "studio" && selectedBlueprint && (
+          <div className="flex-1 flex overflow-hidden">
+            {/* Left Sidebar: Blueprint Presets & Palette */}
+            <aside className="w-72 border-r border-slate-800 bg-slate-900/60 flex flex-col shrink-0">
+              <div className="p-3.5 border-b border-slate-800 max-h-[48%] overflow-y-auto">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Architecture Blueprints ({blueprints.length})
+                  </div>
+                  <button
+                    onClick={handleDuplicateBlueprint}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-semibold cursor-pointer"
+                    title="Clone selected blueprint as a new custom architecture"
+                  >
+                    <Plus className="w-3 h-3" /> New / Clone
+                  </button>
+                </div>
+                <div className="space-y-1.5">
+                  {blueprints.map((bp) => {
+                    const isSel = bp.metadata.id === selectedBlueprint.metadata.id;
+                    const isRenaming = renamingBlueprintId === bp.metadata.id;
+                    return (
+                      <div
+                        key={bp.metadata.id}
+                        onClick={() => handleSelectBlueprint(bp.metadata.id)}
+                        className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer group ${isSel
+                          ? "bg-indigo-950/70 border-indigo-500/80 text-white"
+                          : "bg-slate-900/80 border-slate-800 text-slate-300 hover:border-slate-700"
+                          }`}
+                      >
+                        {isRenaming ? (
+                          <div
+                            className="flex items-center gap-1"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <input
+                              autoFocus
+                              value={renamingBlueprintTitle}
+                              onChange={(e) => setRenamingBlueprintTitle(e.target.value)}
+                              onKeyDown={async (e) => {
+                                if (e.key === "Enter" && renamingBlueprintTitle.trim()) {
+                                  const full = await api.getBlueprint(bp.metadata.id);
+                                  const updatedBp: AgentArchitecture = {
+                                    ...full.blueprint,
+                                    metadata: {
+                                      ...full.blueprint.metadata,
+                                      name: renamingBlueprintTitle.trim(),
+                                    },
+                                  };
+                                  const saved = await api.saveBlueprint({ blueprint: updatedBp });
+                                  if (isSel) {
+                                    setSelectedBlueprint(saved.blueprint);
+                                    setRawYaml(saved.raw_yaml);
+                                  }
+                                  setBlueprints(await api.listBlueprints());
+                                  setRenamingBlueprintId(null);
+                                  notify(`Renamed blueprint to '${saved.blueprint.metadata.name}'`);
+                                } else if (e.key === "Escape") {
+                                  setRenamingBlueprintId(null);
+                                }
+                              }}
+                              className="flex-1 bg-slate-950 border border-indigo-500 rounded px-2 py-1 text-xs text-white focus:outline-none"
+                            />
+                            <button
+                              onClick={async () => {
+                                if (!renamingBlueprintTitle.trim()) {
+                                  setRenamingBlueprintId(null);
+                                  return;
+                                }
+                                const full = await api.getBlueprint(bp.metadata.id);
+                                const updatedBp: AgentArchitecture = {
+                                  ...full.blueprint,
+                                  metadata: {
+                                    ...full.blueprint.metadata,
+                                    name: renamingBlueprintTitle.trim(),
+                                  },
+                                };
+                                const saved = await api.saveBlueprint({ blueprint: updatedBp });
+                                if (isSel) {
+                                  setSelectedBlueprint(saved.blueprint);
+                                  setRawYaml(saved.raw_yaml);
+                                }
+                                setBlueprints(await api.listBlueprints());
+                                setRenamingBlueprintId(null);
+                                notify(`Renamed blueprint to '${saved.blueprint.metadata.name}'`);
+                              }}
+                              className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold cursor-pointer"
+                            >
+                              Save
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between gap-1.5">
+                            <span className="font-semibold text-xs truncate">
+                              {bp.metadata.name}
+                            </span>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300">
+                                v{bp.metadata.version}
+                              </span>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setRenamingBlueprintId(bp.metadata.id);
+                                  setRenamingBlueprintTitle(bp.metadata.name);
+                                }}
+                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-300 transition-colors cursor-pointer"
+                                title={`Rename '${bp.metadata.name}'`}
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  if (blueprints.length <= 1) {
+                                    notify("Cannot delete the last remaining architecture blueprint", "err");
+                                    return;
+                                  }
+                                  try {
+                                    await api.deleteBlueprint(bp.metadata.id);
+                                    const remaining = await api.listBlueprints();
+                                    setBlueprints(remaining);
+                                    if (isSel && remaining.length > 0) {
+                                      await handleSelectBlueprint(remaining[0].metadata.id);
+                                    }
+                                    notify(`Deleted architecture blueprint '${bp.metadata.name}'`);
+                                  } catch (err: unknown) {
+                                    notify(
+                                      err instanceof Error ? err.message : "Failed to delete blueprint",
+                                      "err"
+                                    );
+                                  }
+                                }}
+                                className="p-1 rounded hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
+                                title={`Delete '${bp.metadata.name}'`}
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400">
+                          <span>{bp.topology.pattern}</span>
+                          <span>•</span>
+                          <span>{bp.subagents.length} subagents</span>
+                          <span>•</span>
+                          <span>{bp.hooks.length} hooks</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Add Primitives Palette */}
+              <div className="p-3.5 border-b border-slate-800 space-y-2">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Add Harness Primitives
+                </div>
+                <button
+                  onClick={handleAddSubagent}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-700/50 text-cyan-200 text-xs font-medium cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add Subagent Node
+                </button>
+                <button
+                  onClick={handleAddSkill}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-700/50 text-emerald-200 text-xs font-medium cursor-pointer"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Add Skill / Doc Template
+                </button>
+                <button
+                  onClick={handleAddGuardrailHook}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-950/60 hover:bg-amber-900/60 border border-amber-700/50 text-amber-200 text-xs font-medium cursor-pointer"
+                >
+                  <ShieldAlert className="w-3.5 h-3.5" />
+                  Add Lifecycle Guardrail Hook
+                </button>
+                <button
+                  onClick={handleDuplicateBlueprint}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium cursor-pointer"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  Clone as My Custom Blueprint
+                </button>
+              </div>
+
+              {/* Topology Pattern & Enforcement Mode */}
+              <div className="p-3.5 space-y-3 overflow-y-auto flex-1">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Topology & Enforcement
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Topology Pattern</label>
+                  <select
+                    value={selectedBlueprint.topology.pattern}
+                    onChange={(e) =>
+                      handleCanvasBlueprintChange({
+                        ...selectedBlueprint,
+                        topology: {
+                          ...selectedBlueprint.topology,
+                          pattern: e.target.value as AgentArchitecture["topology"]["pattern"],
+                        },
+                      })
+                    }
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                  >
+                    <option value="solo">solo (Single Agent)</option>
+                    <option value="sequential-pipeline">sequential-pipeline</option>
+                    <option value="generator-verifier-loop">generator-verifier-loop (Actor-Critic)</option>
+                    <option value="parallel-swarm">parallel-swarm</option>
+                    <option value="router-dispatcher">router-dispatcher</option>
+                    <option value="hierarchical-custom">hierarchical-custom</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    Dual-Mode Compilation Guard
+                  </label>
+                  <select
+                    value={selectedBlueprint.topology.enforcement_mode}
+                    onChange={(e) =>
+                      handleCanvasBlueprintChange({
+                        ...selectedBlueprint,
+                        topology: {
+                          ...selectedBlueprint.topology,
+                          enforcement_mode: e.target.value as "prompt" | "hook" | "dual",
+                        },
+                      })
+                    }
+                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                  >
+                    <option value="dual">Dual (Prompt Contract + State-Machine Hooks)</option>
+                    <option value="prompt">Prompt Routing Contract Only</option>
+                    <option value="hook">Runtime Hook State-Machine Only</option>
+                  </select>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    onClick={() => handleSaveBlueprint(false)}
+                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs cursor-pointer"
+                  >
+                    <Save className="w-3.5 h-3.5" />
+                    Save Blueprint to Disk (.yaml)
+                  </button>
+                </div>
+              </div>
+            </aside>
+
+            {/* Center: Interactive React Flow Canvas */}
+            <div className="flex-1 flex flex-col relative">
+              <div className="h-11 border-b border-slate-800 bg-slate-900/50 px-4 flex items-center justify-between text-xs gap-4">
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span className="text-[11px] text-slate-400 shrink-0">Blueprint Name:</span>
+                  <input
+                    value={selectedBlueprint.metadata.name}
+                    onChange={(e) =>
+                      handleCanvasBlueprintChange({
+                        ...selectedBlueprint,
+                        metadata: { ...selectedBlueprint.metadata, name: e.target.value },
+                      })
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleSaveBlueprint(false);
+                    }}
+                    className="bg-slate-950/90 border border-slate-700 hover:border-indigo-500/70 focus:border-indigo-500 rounded-lg px-2.5 py-1 text-xs font-semibold text-white w-80 max-w-full focus:outline-none"
+                    title="Click to edit Architecture Blueprint Name (press Enter or click Save Blueprint)"
+                  />
+                  <input
+                    value={selectedBlueprint.metadata.version}
+                    onChange={(e) =>
+                      handleCanvasBlueprintChange({
+                        ...selectedBlueprint,
+                        metadata: { ...selectedBlueprint.metadata, version: e.target.value },
+                      })
+                    }
+                    className="bg-slate-950/90 border border-slate-800 rounded-lg px-2 py-1 text-[11px] font-mono text-indigo-300 w-16 text-center focus:outline-none"
+                    title="Blueprint semantic version"
+                  />
+                  <button
+                    onClick={() => handleSaveBlueprint(false)}
+                    className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white text-[11px] font-semibold cursor-pointer shrink-0"
+                  >
+                    <Save className="w-3 h-3" /> Save Name
+                  </button>
+                </div>
+                <div className="flex items-center gap-2 text-[11px] text-slate-400 shrink-0">
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-indigo-500" /> Orchestrator
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-cyan-500 ml-2" /> Subagent
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 ml-2" /> Skill
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-500 ml-2" /> Hook
+                </div>
+              </div>
+              <div className="flex-1">
+                <ArchitectureCanvas
+                  blueprint={selectedBlueprint}
+                  targetHarness={runHarness}
+                  harnessModels={harnessModels}
+                  activeAgentId={activeAgentNode}
+                  selectedNodeId={selectedNodeId}
+                  onSelectNode={setSelectedNodeId}
+                  onUpdateBlueprint={handleCanvasBlueprintChange}
+                />
+              </div>
+            </div>
+
+            {/* Right Panel: Node Inspector / Bi-Directional YAML / Compiled Harness Files / Harness Models */}
+            <aside className="w-[460px] border-l border-slate-800 bg-slate-900/70 flex flex-col shrink-0">
+              <div className="flex border-b border-slate-800 bg-slate-950/60">
+                {[
+                  { id: "inspector", label: "Node Inspector", icon: Bot },
+                  { id: "models", label: "Harness Models", icon: Cpu },
+                  { id: "yaml", label: "YAML (2-Way)", icon: Code2 },
+                  { id: "compiled", label: "Compiled Files", icon: Terminal },
+                ].map((p) => {
+                  const Icon = p.icon;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => setStudioRightPanel(p.id as typeof studioRightPanel)}
+                      className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-xs font-medium border-b-2 transition-all cursor-pointer ${studioRightPanel === p.id
+                        ? "border-indigo-500 text-white bg-slate-900"
+                        : "border-transparent text-slate-400 hover:text-slate-200"
+                        }`}
+                    >
+                      <Icon className="w-3.5 h-3.5" />
+                      {p.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Panel 1: Node & Edge Inspector */}
+              {studioRightPanel === "inspector" && (
+                <div className="p-4 overflow-y-auto flex-1 space-y-4 text-xs">
+                  {isOrchestratorSelected && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">
+                          Root Orchestrator Config
+                        </span>
+                        <span className="font-mono text-[11px] text-slate-400">
+                          {selectedBlueprint.orchestrator.id}
+                        </span>
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Display Name</label>
+                        <input
+                          value={selectedBlueprint.orchestrator.name}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              orchestrator: { ...selectedBlueprint.orchestrator, name: e.target.value },
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-slate-400 mb-1">
+                            Model Tier ({HARNESS_LABELS[runHarness].name})
+                          </label>
+                          <select
+                            value={selectedBlueprint.orchestrator.model}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                orchestrator: { ...selectedBlueprint.orchestrator, model: e.target.value },
+                              })
+                            }
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-cyan-300 font-mono text-[11px]"
+                          >
+                            <optgroup label={`Abstract Tiers (${HARNESS_LABELS[runHarness].name} Mapping)`}>
+                              {(["default", "reasoning", "coding", "fast"] as const).map((tier) => (
+                                <option key={tier} value={tier}>
+                                  {tier} → {harnessModels?.tier_map?.[runHarness]?.[tier] || tier}
+                                </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label={`Native ${HARNESS_LABELS[runHarness].name} Models`}>
+                              {(harnessModels?.native_models?.[runHarness] || []).map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-slate-400 mb-1">Max Turns Budget</label>
+                          <input
+                            type="number"
+                            value={selectedBlueprint.orchestrator.budgets.max_turns}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                orchestrator: {
+                                  ...selectedBlueprint.orchestrator,
+                                  budgets: {
+                                    ...selectedBlueprint.orchestrator.budgets,
+                                    max_turns: Number(e.target.value) || 20,
+                                  },
+                                },
+                              })
+                            }
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Per-Harness Explicit Model Overrides for Orchestrator */}
+                      <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-indigo-300">
+                            Per-Harness Model Pinning (Root Orchestrator)
+                          </span>
+                          <span className="text-[10px] text-slate-500">Optional overrides for A/B benchmarks</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {(["claude_code", "antigravity", "opencode"] as HarnessType[]).map((h) => (
+                            <div key={h}>
+                              <label className="block text-[10px] text-slate-400 mb-0.5">
+                                {HARNESS_LABELS[h].name}
+                              </label>
+                              <select
+                                value={selectedBlueprint.orchestrator.harness_models?.[h] || ""}
+                                onChange={(e) => {
+                                  const nextMap = {
+                                    ...(selectedBlueprint.orchestrator.harness_models || {}),
+                                  };
+                                  if (e.target.value) nextMap[h] = e.target.value;
+                                  else delete nextMap[h];
+                                  handleCanvasBlueprintChange({
+                                    ...selectedBlueprint,
+                                    orchestrator: {
+                                      ...selectedBlueprint.orchestrator,
+                                      harness_models: nextMap,
+                                    },
+                                  });
+                                }}
+                                className={`w-full bg-slate-900 border rounded px-1.5 py-1 text-[10px] font-mono ${runHarness === h
+                                  ? "border-cyan-500/70 text-cyan-200"
+                                  : "border-slate-800 text-slate-300"
+                                  }`}
+                              >
+                                <option value="">
+                                  Tier Default (
+                                  {harnessModels?.tier_map?.[h]?.[selectedBlueprint.orchestrator.model] ||
+                                    selectedBlueprint.orchestrator.model}
+                                  )
+                                </option>
+                                {(harnessModels?.native_models?.[h] || []).map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.id}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-[10px] text-slate-400 leading-relaxed pt-1 border-t border-slate-800/80">
+                          💡 {harnessModels?.best_practices?.orchestrator}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4 pt-1">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedBlueprint.orchestrator.permissions.allow_write}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                orchestrator: {
+                                  ...selectedBlueprint.orchestrator,
+                                  permissions: {
+                                    ...selectedBlueprint.orchestrator.permissions,
+                                    allow_write: e.target.checked,
+                                  },
+                                },
+                              })
+                            }
+                          />
+                          <span>Allow Direct File Write</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedBlueprint.orchestrator.permissions.allow_shell}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                orchestrator: {
+                                  ...selectedBlueprint.orchestrator,
+                                  permissions: {
+                                    ...selectedBlueprint.orchestrator.permissions,
+                                    allow_shell: e.target.checked,
+                                  },
+                                },
+                              })
+                            }
+                          />
+                          <span>Allow Direct Shell</span>
+                        </label>
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">System Prompt</label>
+                        <textarea
+                          rows={6}
+                          value={selectedBlueprint.orchestrator.system_prompt}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              orchestrator: {
+                                ...selectedBlueprint.orchestrator,
+                                system_prompt: e.target.value,
+                              },
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] leading-relaxed"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedSubagent && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-cyan-400">
+                          Subagent Node: {selectedSubagent.id}
+                        </span>
+                        <button
+                          onClick={() => {
+                            const updated: AgentArchitecture = {
+                              ...selectedBlueprint,
+                              subagents: selectedBlueprint.subagents.filter(
+                                (s) => s.id !== selectedSubagent.id
+                              ),
+                              topology: {
+                                ...selectedBlueprint.topology,
+                                edges: selectedBlueprint.topology.edges.filter(
+                                  (e) =>
+                                    e.source !== selectedSubagent.id && e.target !== selectedSubagent.id
+                                ),
+                              },
+                            };
+                            handleCanvasBlueprintChange(updated);
+                            setSelectedNodeId("root_orchestrator");
+                          }}
+                          className="text-rose-400 hover:text-rose-300 flex items-center gap-1 text-[11px]"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Remove
+                        </button>
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Subagent Name</label>
+                        <input
+                          value={selectedSubagent.name}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              subagents: selectedBlueprint.subagents.map((s) =>
+                                s.id === selectedSubagent.id ? { ...s, name: e.target.value } : s
+                              ),
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">
+                          Role Description (Used by Orchestrator Router)
+                        </label>
+                        <input
+                          value={selectedSubagent.role}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              subagents: selectedBlueprint.subagents.map((s) =>
+                                s.id === selectedSubagent.id ? { ...s, role: e.target.value } : s
+                              ),
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-slate-400 mb-1">
+                            Model Tier ({HARNESS_LABELS[runHarness].name})
+                          </label>
+                          <select
+                            value={selectedSubagent.model}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                subagents: selectedBlueprint.subagents.map((s) =>
+                                  s.id === selectedSubagent.id ? { ...s, model: e.target.value } : s
+                                ),
+                              })
+                            }
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-cyan-300 font-mono text-[11px]"
+                          >
+                            <optgroup label={`Abstract Tiers (${HARNESS_LABELS[runHarness].name} Mapping)`}>
+                              {(["reasoning", "coding", "fast", "default"] as const).map((tier) => (
+                                <option key={tier} value={tier}>
+                                  {tier} → {harnessModels?.tier_map?.[runHarness]?.[tier] || tier}
+                                </option>
+                              ))}
+                            </optgroup>
+                            <optgroup label={`Native ${HARNESS_LABELS[runHarness].name} Models`}>
+                              {(harnessModels?.native_models?.[runHarness] || []).map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.label}
+                                </option>
+                              ))}
+                            </optgroup>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-slate-400 mb-1">Max Turns</label>
+                          <input
+                            type="number"
+                            value={selectedSubagent.max_turns}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                subagents: selectedBlueprint.subagents.map((s) =>
+                                  s.id === selectedSubagent.id
+                                    ? { ...s, max_turns: Number(e.target.value) || 12 }
+                                    : s
+                                ),
+                              })
+                            }
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                          />
+                        </div>
+                      </div>
+
+                      {/* Per-Harness Explicit Model Overrides for Subagent + Best-Practice Advice */}
+                      <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-cyan-300">
+                            Per-Harness Model Pinning (`{selectedSubagent.id}`)
+                          </span>
+                          <span className="text-[10px] text-slate-500">Configure model per harness</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-1.5">
+                          {(["claude_code", "antigravity", "opencode"] as HarnessType[]).map((h) => (
+                            <div key={h}>
+                              <label className="block text-[10px] text-slate-400 mb-0.5">
+                                {HARNESS_LABELS[h].name}
+                              </label>
+                              <select
+                                value={selectedSubagent.harness_models?.[h] || ""}
+                                onChange={(e) => {
+                                  const nextMap = {
+                                    ...(selectedSubagent.harness_models || {}),
+                                  };
+                                  if (e.target.value) nextMap[h] = e.target.value;
+                                  else delete nextMap[h];
+                                  handleCanvasBlueprintChange({
+                                    ...selectedBlueprint,
+                                    subagents: selectedBlueprint.subagents.map((s) =>
+                                      s.id === selectedSubagent.id
+                                        ? { ...s, harness_models: nextMap }
+                                        : s
+                                    ),
+                                  });
+                                }}
+                                className={`w-full bg-slate-900 border rounded px-1.5 py-1 text-[10px] font-mono ${runHarness === h
+                                  ? "border-cyan-500/70 text-cyan-200"
+                                  : "border-slate-800 text-slate-300"
+                                  }`}
+                              >
+                                <option value="">
+                                  Tier Default (
+                                  {harnessModels?.tier_map?.[h]?.[selectedSubagent.model] ||
+                                    selectedSubagent.model}
+                                  )
+                                </option>
+                                {(harnessModels?.native_models?.[h] || []).map((m) => (
+                                  <option key={m.id} value={m.id}>
+                                    {m.id}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="text-[10px] text-emerald-300/90 leading-relaxed pt-1 border-t border-slate-800/80">
+                          💡{" "}
+                          {!selectedSubagent.permissions.allow_write &&
+                            !selectedSubagent.permissions.allow_shell
+                            ? harnessModels?.best_practices?.reasoning
+                            : !selectedSubagent.permissions.allow_write &&
+                              selectedSubagent.permissions.allow_shell
+                              ? harnessModels?.best_practices?.fast
+                              : harnessModels?.best_practices?.coding}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-4 pt-1">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedSubagent.permissions.allow_write}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                subagents: selectedBlueprint.subagents.map((s) =>
+                                  s.id === selectedSubagent.id
+                                    ? {
+                                      ...s,
+                                      permissions: {
+                                        ...s.permissions,
+                                        allow_write: e.target.checked,
+                                      },
+                                    }
+                                    : s
+                                ),
+                              })
+                            }
+                          />
+                          <span>Allow Write/Edit</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={selectedSubagent.permissions.allow_shell}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                subagents: selectedBlueprint.subagents.map((s) =>
+                                  s.id === selectedSubagent.id
+                                    ? {
+                                      ...s,
+                                      permissions: {
+                                        ...s.permissions,
+                                        allow_shell: e.target.checked,
+                                      },
+                                    }
+                                    : s
+                                ),
+                              })
+                            }
+                          />
+                          <span>Allow Bash/Shell</span>
+                        </label>
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Subagent System Prompt</label>
+                        <textarea
+                          rows={6}
+                          value={selectedSubagent.system_prompt}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              subagents: selectedBlueprint.subagents.map((s) =>
+                                s.id === selectedSubagent.id
+                                  ? { ...s, system_prompt: e.target.value }
+                                  : s
+                              ),
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] leading-relaxed"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedSkill && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                          Skill / Document Template: /{selectedSkill.id}
+                        </span>
+                        <button
+                          onClick={() => {
+                            const updated: AgentArchitecture = {
+                              ...selectedBlueprint,
+                              skills: selectedBlueprint.skills.filter((sk) => sk.id !== selectedSkill.id),
+                            };
+                            handleCanvasBlueprintChange(updated);
+                            setSelectedNodeId("root_orchestrator");
+                          }}
+                          className="text-rose-400 hover:text-rose-300 flex items-center gap-1 text-[11px]"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Remove
+                        </button>
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Skill / Template Title</label>
+                        <input
+                          value={selectedSkill.name}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              skills: selectedBlueprint.skills.map((sk) =>
+                                sk.id === selectedSkill.id ? { ...sk, name: e.target.value } : sk
+                              ),
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">When to Use (Description)</label>
+                        <input
+                          value={selectedSkill.description}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              skills: selectedBlueprint.skills.map((sk) =>
+                                sk.id === selectedSkill.id ? { ...sk, description: e.target.value } : sk
+                              ),
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">
+                          Template Instructions / Markdown Deliverable Format
+                        </label>
+                        <textarea
+                          rows={8}
+                          value={selectedSkill.instructions}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              skills: selectedBlueprint.skills.map((sk) =>
+                                sk.id === selectedSkill.id ? { ...sk, instructions: e.target.value } : sk
+                              ),
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] leading-relaxed"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedHook && (
+                    <div className="space-y-3">
+                      <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                        Lifecycle Guardrail Hook: {selectedHook.id}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-slate-400 mb-1">Lifecycle Event</label>
+                          <select
+                            value={selectedHook.event}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                hooks: selectedBlueprint.hooks.map((h) =>
+                                  h.id === selectedHook.id
+                                    ? { ...h, event: e.target.value as typeof selectedHook.event }
+                                    : h
+                                ),
+                              })
+                            }
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5"
+                          >
+                            <option value="PreToolUse">PreToolUse</option>
+                            <option value="PostToolUse">PostToolUse</option>
+                            <option value="SubagentStop">SubagentStop</option>
+                            <option value="Stop">Stop</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-slate-400 mb-1">Tool Regex Matcher</label>
+                          <input
+                            value={selectedHook.matcher}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                hooks: selectedBlueprint.hooks.map((h) =>
+                                  h.id === selectedHook.id ? { ...h, matcher: e.target.value } : h
+                                ),
+                              })
+                            }
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">Block / Feedback Message</label>
+                        <textarea
+                          rows={3}
+                          value={selectedHook.message}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              hooks: selectedBlueprint.hooks.map((h) =>
+                                h.id === selectedHook.id ? { ...h, message: e.target.value } : h
+                              ),
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Topology Edges Table */}
+                  <div className="pt-3 border-t border-slate-800">
+                    <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                      Workflow Handoff Edges ({selectedBlueprint.topology.edges.length})
+                    </div>
+                    <div className="space-y-2">
+                      {selectedBlueprint.topology.edges.map((edge) => (
+                        <div
+                          key={edge.id}
+                          className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 font-mono text-[11px] text-cyan-300">
+                              <span>#{edge.order}</span>
+                              <span>{edge.source}</span>
+                              <ArrowRight className="w-3 h-3" />
+                              <span>{edge.target}</span>
+                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
+                                ≤{edge.max_loops}x
+                              </span>
+                            </div>
+                            <input
+                              value={edge.condition}
+                              onChange={(e) =>
+                                handleCanvasBlueprintChange({
+                                  ...selectedBlueprint,
+                                  topology: {
+                                    ...selectedBlueprint.topology,
+                                    edges: selectedBlueprint.topology.edges.map((ed) =>
+                                      ed.id === edge.id ? { ...ed, condition: e.target.value } : ed
+                                    ),
+                                  },
+                                })
+                              }
+                              className="mt-1 w-full bg-transparent text-[11px] text-slate-400 focus:text-white outline-none"
+                            />
+                          </div>
+                          <button
+                            onClick={() =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                topology: {
+                                  ...selectedBlueprint.topology,
+                                  edges: selectedBlueprint.topology.edges.filter(
+                                    (ed) => ed.id !== edge.id
+                                  ),
+                                },
+                              })
+                            }
+                            className="text-slate-500 hover:text-rose-400"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Panel 1.5: Global Harness Models & Tier Configurator */}
+              {studioRightPanel === "models" && harnessModels && (
+                <div className="flex-1 flex flex-col p-4 overflow-y-auto space-y-4 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-bold text-white text-sm">
+                        Configure Models per Harness
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        Customize tier mappings & available models for Claude Code, Antigravity & OpenCode
+                      </div>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const synced = await api.syncHarnessModelsFromCli();
+                          setHarnessModels(synced);
+                          notify("Auto-discovered live models from installed agy & opencode CLIs!");
+                        } catch (err: unknown) {
+                          notify(err instanceof Error ? err.message : "Sync failed", "err");
+                        }
+                      }}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-700/60 text-cyan-200 text-[11px] font-semibold cursor-pointer"
+                    >
+                      <RefreshCw className="w-3 h-3" /> Sync CLI Models
+                    </button>
+                  </div>
+
+                  {/* Select which harness to configure */}
+                  <div className="flex items-center gap-1.5">
+                    {(["claude_code", "antigravity", "opencode"] as HarnessType[]).map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => {
+                          setRunHarness(h);
+                          setPreviewHarness(h);
+                        }}
+                        className={`flex-1 py-1.5 px-2 rounded-lg font-medium border text-[11px] cursor-pointer ${runHarness === h
+                          ? "bg-indigo-600/25 border-indigo-500 text-white"
+                          : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
+                          }`}
+                      >
+                        {HARNESS_LABELS[h].name}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Tier Mapping Editor for Active Harness */}
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-indigo-400">
+                      {HARNESS_LABELS[runHarness].name} — Default Role Tier Mapping
+                    </div>
+                    {(["default", "reasoning", "coding", "fast"] as const).map((tier) => (
+                      <div key={tier} className="grid grid-cols-3 items-center gap-2">
+                        <span className="font-mono text-cyan-300 font-semibold">{tier}</span>
+                        <select
+                          value={harnessModels.tier_map[runHarness]?.[tier] || ""}
+                          onChange={async (e) => {
+                            const updatedTierMap = {
+                              ...harnessModels.tier_map,
+                              [runHarness]: {
+                                ...harnessModels.tier_map[runHarness],
+                                [tier]: e.target.value,
+                              },
+                            };
+                            const saved = await api.updateHarnessModels({
+                              tier_map: updatedTierMap,
+                            });
+                            setHarnessModels(saved);
+                            if (selectedBlueprint) {
+                              const comp = await api.compilePreview(
+                                selectedBlueprint.metadata.id,
+                                runHarness
+                              );
+                              setCompiledResult(comp);
+                            }
+                            notify(`Updated ${HARNESS_LABELS[runHarness].name} '${tier}' tier to ${e.target.value}`);
+                          }}
+                          className="col-span-2 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px] text-white"
+                        >
+                          {(harnessModels.native_models[runHarness] || []).map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.label} ({m.id})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Add Custom Native Model to Active Harness */}
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
+                      Add Custom Model to {HARNESS_LABELS[runHarness].name}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <input
+                        placeholder="Model ID (e.g. provider/model-id)"
+                        value={newCustomModelId}
+                        onChange={(e) => setNewCustomModelId(e.target.value)}
+                        className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-[11px]"
+                      />
+                      <input
+                        placeholder="Display Label"
+                        value={newCustomModelLabel}
+                        onChange={(e) => setNewCustomModelLabel(e.target.value)}
+                        className="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-[11px]"
+                      />
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (!newCustomModelId.trim()) return;
+                        const currList = harnessModels.native_models[runHarness] || [];
+                        const updatedNative = {
+                          ...harnessModels.native_models,
+                          [runHarness]: [
+                            ...currList,
+                            {
+                              id: newCustomModelId.trim(),
+                              label: newCustomModelLabel.trim() || newCustomModelId.trim(),
+                              tier: "coding",
+                            },
+                          ],
+                        };
+                        const saved = await api.updateHarnessModels({
+                          native_models: updatedNative,
+                        });
+                        setHarnessModels(saved);
+                        setNewCustomModelId("");
+                        setNewCustomModelLabel("");
+                        notify(`Added model '${newCustomModelId.trim()}' to ${HARNESS_LABELS[runHarness].name}`);
+                      }}
+                      className="w-full py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs cursor-pointer"
+                    >
+                      + Register Model in {HARNESS_LABELS[runHarness].name}
+                    </button>
+                  </div>
+
+                  {/* Best Practices Reference Card */}
+                  <div className="p-3 rounded-xl bg-indigo-950/30 border border-indigo-800/50 space-y-2">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-indigo-300">
+                      Multi-Agent Model Routing Best Practices
+                    </div>
+                    {Object.entries(harnessModels.best_practices || {}).map(([k, advice]) => (
+                      <div key={k} className="text-[11px] text-slate-300 leading-relaxed">
+                        • {advice}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Panel 2: Two-Way Declarative YAML Editor */}
+              {studioRightPanel === "yaml" && (
+                <div className="flex-1 flex flex-col p-3 overflow-hidden">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs text-slate-400">
+                      Bidirectional sync with `blueprints/{selectedBlueprint.metadata.id}.yaml`
+                    </span>
+                    <button
+                      onClick={() => handleSaveBlueprint(true)}
+                      className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" /> Apply & Save YAML
+                    </button>
+                  </div>
+                  <textarea
+                    value={rawYaml}
+                    onChange={(e) => setRawYaml(e.target.value)}
+                    className="flex-1 w-full bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs text-emerald-300 leading-relaxed resize-none focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              )}
+
+              {/* Panel 3: Multi-Harness Native Compiler Preview & Exporter */}
+              {studioRightPanel === "compiled" && (
+                <div className="flex-1 flex flex-col p-3 overflow-y-auto space-y-3 text-xs">
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {(["claude_code", "antigravity", "opencode"] as HarnessType[]).map((h) => (
+                      <button
+                        key={h}
+                        onClick={() => {
+                          setPreviewHarness(h);
+                          setRunHarness(h);
+                        }}
+                        className={`flex-1 py-1.5 px-2 rounded-lg font-medium border text-[11px] cursor-pointer ${previewHarness === h
+                          ? "bg-indigo-600/25 border-indigo-500 text-white"
+                          : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
+                          }`}
+                      >
+                        {HARNESS_LABELS[h].name}
+                      </button>
+                    ))}
+                  </div>
+
+                  {compiledResult && (
+                    <>
+                      <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1 shrink-0">
+                        <div className="text-[10px] uppercase font-bold text-slate-400">
+                          Headless Invocation Command
+                        </div>
+                        <div className="font-mono text-[11px] text-cyan-300 break-all">
+                          {compiledResult.cli_preview_command}
+                        </div>
+                      </div>
+
+                      {/* Generated File Tabs */}
+                      <div className="space-y-1 shrink-0">
+                        <div className="text-[10px] uppercase font-bold text-slate-400">
+                          Generated Agent & Configuration Files ({compiledResult.files.length})
+                        </div>
+                        <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto p-1 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                          {compiledResult.files.map((f, idx) => (
+                            <button
+                              key={f.relative_path}
+                              onClick={() => setSelectedCompiledFileIdx(idx)}
+                              className={`px-2 py-1 rounded text-[11px] font-mono border cursor-pointer ${selectedCompiledFileIdx === idx
+                                ? "bg-cyan-950 border-cyan-500 text-cyan-200"
+                                : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
+                                }`}
+                            >
+                              {f.relative_path}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      {compiledResult.files[selectedCompiledFileIdx] && (
+                        <div className="flex flex-col shrink-0">
+                          <div className="text-[11px] text-slate-400 mb-1">
+                            {compiledResult.files[selectedCompiledFileIdx].description}
+                          </div>
+                          <pre className="h-72 max-h-96 overflow-auto resize-y bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[11px] text-slate-200 leading-relaxed whitespace-pre-wrap">
+                            {compiledResult.files[selectedCompiledFileIdx].content}
+                          </pre>
+                        </div>
+                      )}
+
+                      {/* Direct Export & Deployed Project Evaluation */}
+                      <div className="pt-3 border-t border-slate-800 space-y-2.5 shrink-0 pb-4">
+                        <div className="flex items-center justify-between">
+                          <div className="text-[11px] font-semibold text-slate-300">
+                            Deploy to Workspace & Link External Docs
+                          </div>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-700/50">
+                            Active Blueprint: {selectedBlueprint.metadata.id}
+                          </span>
+                        </div>
+                        <div className="space-y-1.5">
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-0.5">
+                              0. Architecture Blueprint to Deploy
+                            </label>
+                            <select
+                              value={selectedBlueprint.metadata.id}
+                              onChange={(e) => handleSelectBlueprint(e.target.value)}
+                              className="w-full bg-slate-950 border border-indigo-500/60 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-white"
+                            >
+                              {blueprints.map((b) => (
+                                <option key={b.metadata.id} value={b.metadata.id}>
+                                  {b.metadata.name} ({b.metadata.id})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-0.5">
+                              1. Target {HARNESS_LABELS[previewHarness].name} Project Workspace Folder (where you run `{HARNESS_LABELS[previewHarness].badge}`)
+                            </label>
+                            <input
+                              placeholder="Workspace folder (e.g. D:\MyProjectWorkspace or .)"
+                              value={exportDir}
+                              onChange={(e) => setExportDir(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-0.5">
+                              2. External Documentation Folder (workshops, customer requirements, BoR/DoR/DoD)
+                            </label>
+                            <input
+                              placeholder="External docs folder (e.g. test_application_docs or D:\Docs)"
+                              value={externalDocsDir}
+                              onChange={(e) => setExternalDocsDir(e.target.value)}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono text-emerald-300"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-slate-400 mb-0.5">
+                              3. Evaluation Benchmark Task (Verifiers used when clicking &ldquo;2. Evaluate Project&rdquo;)
+                            </label>
+                            <select
+                              value={selectedTask?.id || ""}
+                              onChange={async (e) => {
+                                const res = await api.getTask(e.target.value);
+                                setSelectedTask(res.task);
+                                setTaskYaml(res.raw_yaml);
+                              }}
+                              className="w-full bg-slate-950 border border-emerald-500/60 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-emerald-300"
+                            >
+                              {tasks.map((t) => (
+                                <option key={t.id} value={t.id}>
+                                  {t.name} ({t.verifiers.length} verifiers)
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={async () => {
+                              const targetPath = exportDir.trim() || ".";
+                              try {
+                                await api.saveBlueprint({ blueprint: selectedBlueprint });
+                                const res = await api.exportBlueprint(
+                                  selectedBlueprint.metadata.id,
+                                  previewHarness,
+                                  targetPath,
+                                  selectedTask?.id,
+                                  externalDocsDir.trim()
+                                );
+                                setExportDir(res.target_directory);
+                                setDeploymentReceipt(res);
+                                setRuns(await api.listRuns());
+                                notify(
+                                  `Deployed ${res.files_written.length} ${HARNESS_LABELS[previewHarness].name} files to ${res.target_directory} with read access to ${res.discovered_docs.length} external docs!`
+                                );
+                              } catch (err: unknown) {
+                                notify(err instanceof Error ? err.message : "Export failed", "err");
+                              }
+                            }}
+                            className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs cursor-pointer"
+                            title="Export native agent files, authorize external docs directory, and inject file manifest"
+                          >
+                            <FolderOutput className="w-3.5 h-3.5" /> 1. Deploy & Link Docs
+                          </button>
+                          <button
+                            onClick={async () => {
+                              const targetPath = exportDir.trim() || ".";
+                              try {
+                                const evaluatedRun = await api.evaluateDeployedDirectory({
+                                  project_directory: targetPath,
+                                  task_id: selectedTask?.id,
+                                  architecture_id: selectedBlueprint.metadata.id,
+                                  harness: previewHarness,
+                                });
+                                setActiveRun(evaluatedRun);
+                                setRuns(await api.listRuns());
+                                notify(
+                                  `Evaluated project folder '${targetPath}'! Score: ${evaluatedRun.evaluation?.overall_composite_score.toFixed(1) ?? "--"
+                                  }/100`
+                                );
+                                setActiveTab("evaluation");
+                              } catch (err: unknown) {
+                                notify(
+                                  err instanceof Error ? err.message : "Failed to evaluate folder",
+                                  "err"
+                                );
+                              }
+                            }}
+                            className="flex-1 flex items-center justify-center gap-1 px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs cursor-pointer"
+                            title="Ingest .harness-eval telemetry & deliverables from the project folder and score performance"
+                          >
+                            <BarChart3 className="w-3.5 h-3.5" /> 2. Evaluate Project
+                          </button>
+                        </div>
+
+                        {deploymentReceipt && (
+                          <div className="p-2.5 rounded-xl bg-emerald-950/35 border border-emerald-700/50 space-y-1.5 text-[11px]">
+                            <div className="font-bold text-emerald-300 flex items-center gap-1">
+                              <CheckCircle2 className="w-3.5 h-3.5" /> Deployment & External Docs Verified ({HARNESS_LABELS[previewHarness].name})
+                            </div>
+                            <div className="text-slate-300">
+                              <strong>Agents Installed ({deploymentReceipt.installed_agents.length}):</strong>{" "}
+                              <span className="font-mono text-cyan-300">
+                                {deploymentReceipt.installed_agents.join(", ")}
+                              </span>
+                            </div>
+                            <div className="text-slate-300">
+                              <strong>{previewHarness === "antigravity" ? "Skills Installed:" : "Commands Installed:"}</strong>{" "}
+                              <span className="font-mono text-indigo-300">
+                                {deploymentReceipt.installed_commands.join(", ")}
+                              </span>
+                            </div>
+                            <div className="text-slate-300">
+                              <strong>External Docs Linked ({deploymentReceipt.discovered_docs.length} files):</strong>{" "}
+                              <span className="font-mono text-emerald-300">
+                                {deploymentReceipt.docs_directory || externalDocsDir || "None"}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 pt-1 border-t border-emerald-800/40">
+                              {previewHarness === "antigravity" ? (
+                                <>
+                                  Next: Open <code className="text-cyan-300">Antigravity (agy)</code> in{" "}
+                                  <code className="text-slate-200">{exportDir.trim() || deploymentReceipt.target_directory}</code> and ask:{" "}
+                                  <code className="text-emerald-300">
+                                    &ldquo;Run the verify-setup skill&rdquo;
+                                  </code>{" "}
+                                  then{" "}
+                                  <code className="text-emerald-300">
+                                    &ldquo;Run the generate-tba-pack skill&rdquo;
+                                  </code>.
+                                </>
+                              ) : previewHarness === "opencode" ? (
+                                <>
+                                  Next: Run <code className="text-cyan-300">opencode agent list</code> or open{" "}
+                                  <code className="text-cyan-300">opencode</code> in{" "}
+                                  <code className="text-slate-200">{exportDir.trim() || deploymentReceipt.target_directory}</code> and run{" "}
+                                  <code className="text-emerald-300">/verify-setup</code> then{" "}
+                                  <code className="text-emerald-300">/generate-tba-pack</code>.
+                                </>
+                              ) : (
+                                <>
+                                  Next: Open <code className="text-cyan-300">claude</code> in{" "}
+                                  <code className="text-slate-200">{exportDir.trim() || deploymentReceipt.target_directory}</code> and run{" "}
+                                  <code className="text-emerald-300">/verify-setup</code> then{" "}
+                                  <code className="text-emerald-300">/generate-tba-pack</code>.
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </aside>
+          </div>
+        )}
+
+        {/* ==================== TAB 2: BENCHMARK TASKS ==================== */}
+        {activeTab === "tasks" && (
+          <div className="flex-1 flex overflow-hidden">
+            <aside className="w-80 border-r border-slate-800 bg-slate-900/60 p-4 space-y-2 overflow-y-auto">
+              <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
+                Benchmark Task Suite ({tasks.length})
+              </div>
+              {tasks.map((t) => (
+                <button
+                  key={t.id}
+                  onClick={async () => {
+                    const res = await api.getTask(t.id);
+                    setSelectedTask(res.task);
+                    setTaskYaml(res.raw_yaml);
+                  }}
+                  className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer ${selectedTask?.id === t.id
+                    ? "bg-indigo-950/70 border-indigo-500 text-white"
+                    : "bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700"
+                    }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-xs">{t.name}</span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1.5 text-[10px]">
+                    <span className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 uppercase">
+                      {t.category}
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 uppercase">
+                      {t.difficulty}
+                    </span>
+                    <span className="text-slate-400">{t.verifiers.length} verifiers</span>
+                  </div>
+                </button>
+              ))}
+            </aside>
+
+            {selectedTask && (
+              <div className="flex-1 grid grid-cols-2 gap-6 p-6 overflow-y-auto">
+                <div className="space-y-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-white">{selectedTask.name}</h2>
+                    <p className="text-xs text-slate-400 mt-1">{selectedTask.description}</p>
+                  </div>
+                  <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="text-xs font-bold uppercase text-indigo-400">
+                      Task Prompt Sent to Harness
+                    </div>
+                    <pre className="text-xs text-slate-200 whitespace-pre-wrap font-mono bg-slate-950 p-3 rounded-lg border border-slate-800">
+                      {selectedTask.prompt}
+                    </pre>
+                  </div>
+                  <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs font-bold uppercase text-emerald-400">
+                        Deterministic Outcome Verifiers ({selectedTask.verifiers.length})
+                      </div>
+                      <span className="text-[10px] text-slate-400">
+                        Supports Code & No-Code BA/Doc Verifiers
+                      </span>
+                    </div>
+                    {/* Quick Add No-Code BA & Document Verifiers */}
+                    <div className="flex flex-wrap gap-1.5 pb-2 border-b border-slate-800">
+                      {[
+                        {
+                          label: "+ Wikipedia User Story (3Cs + INVEST + BDD)",
+                          check: {
+                            id: `user_story_invest_${Date.now().toString().slice(-3)}`,
+                            name: "Wikipedia User Story Standard (3Cs + INVEST + Dev-QA BDD)",
+                            type: "user_story_invest_check",
+                            target_path: "EPICS_AND_USER_STORIES.md",
+                            weight: 2.0,
+                            required: true,
+                            timeout_seconds: 15,
+                          },
+                        },
+                        {
+                          label: "+ Required Markdown Sections",
+                          check: {
+                            id: `md_sections_${Date.now().toString().slice(-3)}`,
+                            name: "Required Specification Sections Present",
+                            type: "markdown_sections_present",
+                            target_path: "EPICS_AND_USER_STORIES.md",
+                            pattern: "Epics,User Stories,Conversation,Confirmation,INVEST,Traceability Matrix",
+                            weight: 1.5,
+                            required: true,
+                            timeout_seconds: 15,
+                          },
+                        },
+                        {
+                          label: "+ Mermaid Workflow Validator",
+                          check: {
+                            id: `mermaid_valid_${Date.now().toString().slice(-3)}`,
+                            name: "Valid Mermaid Process & State Diagrams",
+                            type: "mermaid_diagram_valid",
+                            target_path: "WORKFLOWS_AND_DELIVERY_DOCS.md",
+                            weight: 1.5,
+                            required: true,
+                            timeout_seconds: 15,
+                          },
+                        },
+                      ].map((btn) => (
+                        <button
+                          key={btn.label}
+                          onClick={async () => {
+                            const updatedTask: TaskSpec = {
+                              ...selectedTask,
+                              verifiers: [...selectedTask.verifiers, btn.check],
+                            };
+                            const saved = await api.saveTask({ task: updatedTask });
+                            setSelectedTask(saved.task);
+                            setTaskYaml(saved.raw_yaml);
+                            setTasks(await api.listTasks());
+                            notify(`Added '${btn.check.name}' verifier to task`);
+                          }}
+                          className="px-2 py-1 rounded-lg bg-slate-950 hover:bg-indigo-950 border border-slate-700 hover:border-indigo-500 text-[10px] text-indigo-300 font-medium cursor-pointer"
+                        >
+                          {btn.label}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="space-y-2">
+                      {selectedTask.verifiers.map((v) => (
+                        <div
+                          key={v.id}
+                          className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
+                        >
+                          <div>
+                            <div className="font-semibold text-white">{v.name}</div>
+                            <div className="font-mono text-[11px] text-slate-400">
+                              type: {v.type}{" "}
+                              {v.target_path ? `| file: ${v.target_path} ` : ""}
+                              {v.command ? `| cmd: ${v.command}` : v.pattern ? `|sections/regex: ${v.pattern}` : ""}
+                            </div>
+                          </div>
+                          <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/40">
+                            Weight {v.weight}x
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-xs font-bold uppercase text-slate-400">
+                      Task Specification YAML (`tasks/{selectedTask.id}.yaml`)
+                    </span>
+                    <button
+                      onClick={async () => {
+                        try {
+                          const saved = await api.saveTask({ raw_yaml: taskYaml });
+                          setSelectedTask(saved.task);
+                          setTaskYaml(saved.raw_yaml);
+                          setTasks(await api.listTasks());
+                          notify(`Saved task '${saved.task.name}'`);
+                        } catch (err: unknown) {
+                          notify(err instanceof Error ? err.message : "Failed to save task", "err");
+                        }
+                      }}
+                      className="flex items-center gap-1 px-3 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" /> Save Task YAML
+                    </button>
+                  </div>
+                  <textarea
+                    value={taskYaml}
+                    onChange={(e) => setTaskYaml(e.target.value)}
+                    className="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-4 font-mono text-xs text-cyan-300 resize-none"
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ==================== TAB 3: EXECUTE & LIVE TRACE ==================== */}
+        {activeTab === "runner" && (
+          <div className="flex-1 flex overflow-hidden">
+            {/* Left Launchpad & Run History */}
+            <aside className="w-80 border-r border-slate-800 bg-slate-900/60 p-4 flex flex-col gap-4 overflow-y-auto shrink-0">
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="text-xs font-bold uppercase tracking-wider text-indigo-400">
+                  Launch Isolated Sandbox Run
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Architecture Blueprint</label>
+                  <select
+                    value={selectedBlueprint?.metadata.id || ""}
+                    onChange={(e) => handleSelectBlueprint(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                  >
+                    {blueprints.map((b) => (
+                      <option key={b.metadata.id} value={b.metadata.id}>
+                        {b.metadata.name} (v{b.metadata.version})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Benchmark Task</label>
+                  <select
+                    value={selectedTask?.id || ""}
+                    onChange={async (e) => {
+                      const res = await api.getTask(e.target.value);
+                      setSelectedTask(res.task);
+                      setTaskYaml(res.raw_yaml);
+                    }}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                  >
+                    {tasks.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name} ({t.difficulty})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Target Coding Harness</label>
+                  <select
+                    value={runHarness}
+                    onChange={(e) => setRunHarness(e.target.value as HarnessType)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                  >
+                    <option value="claude_code">
+                      Claude Code ({harnessStatus.claude_code?.available ? "CLI Detected" : "Sandbox Sim Ready"})
+                    </option>
+                    <option value="antigravity">
+                      Antigravity ({harnessStatus.antigravity?.available ? "CLI Detected" : "Sandbox Sim Ready"})
+                    </option>
+                    <option value="opencode">
+                      OpenCode ({harnessStatus.opencode?.available ? "CLI Detected" : "Sandbox Sim Ready"})
+                    </option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Execution Mode</label>
+                  <select
+                    value={runMode}
+                    onChange={(e) => setRunMode(e.target.value as RunMode)}
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                  >
+                    <option value="simulated_benchmark">
+                      Simulated Sandbox Benchmark (Fast Topology Test)
+                    </option>
+                    <option value="headless">
+                      Headless Automated Harness CLI (claude -p / opencode run / agy)
+                    </option>
+                    <option value="interactive">
+                      Interactive User Session (Deploy to Sandbox + Live Hooks)
+                    </option>
+                  </select>
+                </div>
+
+                <button
+                  onClick={handleStartRun}
+                  disabled={isLaunchingRun}
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs cursor-pointer"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  {isLaunchingRun ? "Deploying to Git Sandbox..." : "Start Execution Run"}
+                </button>
+              </div>
+
+              {/* Run History List */}
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                    Execution History ({runs.length})
+                  </div>
+                  {runs.length > 0 && (
+                    <button
+                      onClick={async () => {
+                        try {
+                          const res = await api.deleteAllRuns();
+                          setRuns([]);
+                          setActiveRun(null);
+                          setTelemetryEvents([]);
+                          setPlainTextLog("");
+                          setCompareIds([]);
+                          notify(`Cleared all ${res.deleted_count} execution run(s) from history`);
+                        } catch (err: unknown) {
+                          notify(err instanceof Error ? err.message : "Failed to clear history", "err");
+                        }
+                      }}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/70 hover:bg-rose-900 border border-rose-800/60 text-rose-300 text-[10px] font-semibold cursor-pointer"
+                      title="Delete all execution history"
+                    >
+                      <Trash2 className="w-3 h-3" /> Clear All
+                    </button>
+                  )}
+                </div>
+                {runs.map((r) => (
+                  <div
+                    key={r.id}
+                    onClick={() => setActiveRun(r)}
+                    className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all cursor-pointer group relative ${activeRun?.id === r.id
+                      ? "bg-indigo-950/70 border-indigo-500 text-white"
+                      : "bg-slate-900/90 border-slate-800 text-slate-300 hover:border-slate-700"
+                      }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-semibold truncate">{r.architecture_name}</span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        {r.evaluation && (
+                          <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/40">
+                            {r.evaluation.overall_composite_score.toFixed(1)}
+                          </span>
+                        )}
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              await api.deleteRun(r.id);
+                              const remaining = runs.filter((item) => item.id !== r.id);
+                              setRuns(remaining);
+                              setCompareIds((prev) => prev.filter((id) => id !== r.id));
+                              if (activeRun?.id === r.id) {
+                                setActiveRun(remaining[0] || null);
+                                if (!remaining[0]) {
+                                  setTelemetryEvents([]);
+                                  setPlainTextLog("");
+                                }
+                              }
+                              notify(`Deleted run ${r.id}`);
+                            } catch (err: unknown) {
+                              notify(err instanceof Error ? err.message : "Failed to delete run", "err");
+                            }
+                          }}
+                          className="p-1 rounded hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+                          title={`Delete run ${r.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-slate-400 truncate mt-0.5">{r.task_name}</div>
+                    <div className="flex items-center justify-between mt-1.5 text-[10px] text-slate-400">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300">{r.harness}</span>
+                      <span
+                        className={`uppercase font-semibold ${r.status === "completed"
+                          ? "text-emerald-400"
+                          : r.status === "running"
+                            ? "text-amber-300 animate-pulse"
+                            : r.status === "failed"
+                              ? "text-rose-400"
+                              : "text-slate-400"
+                          }`}
+                      >
+                        {r.status}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </aside>
+
+            {/* Right: Live Topology Execution & Telemetry Stream */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              {activeRun ? (
+                <>
+                  <div className="p-4 border-b border-slate-800 bg-slate-900/70 flex items-center justify-between">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-sm text-white">
+                          {activeRun.architecture_name}
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 border border-cyan-700/40">
+                          {activeRun.harness}
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                          {activeRun.mode}
+                        </span>
+                      </div>
+                      <div className="text-[11px] text-slate-400 font-mono mt-1">
+                        Sandbox: {activeRun.sandbox_path}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {activeRun.status === "running" && (
+                        <button
+                          onClick={async () => {
+                            try {
+                              const stopped = await api.stopRun(activeRun.id, true);
+                              setActiveRun(stopped);
+                              setRuns(await api.listRuns());
+                              notify(`Stopped run ${activeRun.id} and evaluated current sandbox outputs`);
+                            } catch (err: unknown) {
+                              notify(err instanceof Error ? err.message : "Failed to stop run", "err");
+                            }
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs cursor-pointer"
+                        >
+                          <XCircle className="w-3.5 h-3.5" />
+                          Stop & Evaluate Now
+                        </button>
+                      )}
+                      {activeRun.status === "waiting_for_user" && (
+                        <button
+                          onClick={handleCompleteInteractive}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs cursor-pointer"
+                        >
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Complete & Evaluate Interactive Session
+                        </button>
+                      )}
+                      {activeRun.evaluation && (
+                        <button
+                          onClick={() => setActiveTab("evaluation")}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs cursor-pointer"
+                        >
+                          <BarChart3 className="w-3.5 h-3.5" />
+                          View Full Evaluation ({activeRun.evaluation.overall_composite_score.toFixed(1)}/100)
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Interactive Session Instructions Banner */}
+                  {activeRun.status === "waiting_for_user" && (
+                    <div className="p-3 bg-amber-950/60 border-b border-amber-800/70 text-xs text-amber-200 flex items-center justify-between">
+                      <div>
+                        <span className="font-bold">Interactive Session Ready:</span> Open a terminal in the isolated worktree and run:{" "}
+                        <code className="px-2 py-0.5 rounded bg-slate-950 text-cyan-300 font-mono">
+                          cd "{activeRun.sandbox_path}" && {activeRun.cli_command}
+                        </code>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Telemetry Event Timeline & Copyable Console Log */}
+                  <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                    {/* Live Status & Controls Bar */}
+                    <div className="p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between gap-4 flex-wrap">
+                      <div className="flex items-center gap-3 text-xs">
+                        <span
+                          className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full font-bold uppercase text-[10px] ${activeRun.status === "running"
+                            ? "bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse"
+                            : activeRun.status === "completed"
+                              ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                              : activeRun.status === "failed"
+                                ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
+                                : "bg-indigo-500/20 text-indigo-300 border border-indigo-500/40"
+                            }`}
+                        >
+                          <Activity className="w-3 h-3" />
+                          {activeRun.status}
+                        </span>
+                        <span className="text-slate-300">
+                          Active Node:{" "}
+                          <strong className="text-cyan-300 font-mono">
+                            @{activeAgentNode || "root_orchestrator"}
+                          </strong>
+                        </span>
+                        <span className="text-slate-400">•</span>
+                        <span className="text-slate-400">{telemetryEvents.length} coalesced steps</span>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-[11px]">
+                          <button
+                            onClick={() => setTraceViewMode("cards")}
+                            className={`px-2.5 py-1 rounded-md font-medium cursor-pointer ${traceViewMode === "cards"
+                              ? "bg-indigo-600 text-white"
+                              : "text-slate-400 hover:text-slate-200"
+                              }`}
+                          >
+                            Structured Timeline
+                          </button>
+                          <button
+                            onClick={async () => {
+                              setTraceViewMode("console_log");
+                              const res = await api.getRunLog(activeRun.id);
+                              setPlainTextLog(res.log);
+                            }}
+                            className={`px-2.5 py-1 rounded-md font-medium cursor-pointer ${traceViewMode === "console_log"
+                              ? "bg-indigo-600 text-white"
+                              : "text-slate-400 hover:text-slate-200"
+                              }`}
+                          >
+                            Plain-Text Log (execution.log)
+                          </button>
+                        </div>
+
+                        <button
+                          onClick={async () => {
+                            const res = await api.getRunLog(activeRun.id);
+                            setPlainTextLog(res.log);
+                            await navigator.clipboard.writeText(res.log);
+                            notify("Copied clean execution log to clipboard — paste it directly in chat for feedback!");
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-cyan-300 text-xs font-semibold cursor-pointer"
+                        >
+                          <Code2 className="w-3.5 h-3.5" />
+                          Copy Log for Feedback
+                        </button>
+                      </div>
+                    </div>
+
+                    {traceViewMode === "console_log" ? (
+                      <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-emerald-300 whitespace-pre-wrap leading-relaxed overflow-x-auto">
+                        {plainTextLog || "Loading formatted execution log..."}
+                      </pre>
+                    ) : (
+                      telemetryEvents.map((ev, idx) => (
+                        <div
+                          key={ev.id || idx}
+                          className={`p-3.5 rounded-xl border text-xs flex items-start justify-between gap-4 ${ev.status === "blocked" || ev.event_type === "TopologyViolation"
+                            ? "bg-rose-950/40 border-rose-700/70"
+                            : ev.event_type === "SubagentStart"
+                              ? "bg-cyan-950/35 border-cyan-700/60"
+                              : "bg-slate-900/90 border-slate-800"
+                            }`}
+                        >
+                          <div className="space-y-1.5 min-w-0 flex-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-950 text-slate-400 border border-slate-800">
+                                #{idx + 1}
+                              </span>
+                              <span className="font-mono text-[10px] px-2 py-0.5 rounded bg-slate-800 text-indigo-300 font-semibold">
+                                {ev.event_type}
+                              </span>
+                              <span className="font-semibold text-cyan-300">@{ev.agent_id}</span>
+                              {ev.tool_name && (
+                                <span className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-slate-950 text-emerald-300 border border-slate-800">
+                                  tool: {ev.tool_name}
+                                </span>
+                              )}
+                              <span className="text-[10px] text-slate-500">
+                                {ev.timestamp.slice(11, 19)}
+                              </span>
+                            </div>
+                            {ev.message && (
+                              <div className="text-slate-200 leading-relaxed whitespace-pre-wrap">
+                                {ev.message}
+                              </div>
+                            )}
+                            {ev.tool_output && (
+                              <pre className="mt-1 p-2.5 rounded-lg bg-slate-950 text-[11px] font-mono text-slate-300 overflow-x-auto border border-slate-800">
+                                {ev.tool_output}
+                              </pre>
+                            )}
+                          </div>
+                          <div className="text-right font-mono text-[11px] text-slate-400 shrink-0 space-y-0.5">
+                            {(ev.input_tokens > 0 || ev.output_tokens > 0) && (
+                              <div className="text-slate-300">
+                                {(ev.input_tokens + ev.output_tokens).toLocaleString()} tok ($
+                                {ev.cost_usd.toFixed(4)})
+                              </div>
+                            )}
+                            {ev.duration_ms > 0 && <div>{ev.duration_ms.toFixed(0)} ms</div>}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center text-slate-500 text-sm">
+                  Select or start an execution run on the left to stream live telemetry.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ==================== TAB 4: 4-LAYER EVALUATION SCORECARD ==================== */}
+        {activeTab === "evaluation" && (
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            {activeRun?.evaluation ? (
+              <>
+                {/* Top Summary KPI Cards */}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                      {activeRun.evaluation.architecture_name}
+                      <span className="text-xs px-2.5 py-1 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                        {activeRun.evaluation.harness}
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Task: {activeRun.evaluation.task_name} • Run ID: {activeRun.id}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => {
+                        setActiveTab("advisor");
+                        handleLoadAdvisor(false);
+                      }}
+                      className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-cyan-600 hover:from-indigo-500 hover:to-cyan-500 text-white font-semibold text-xs shadow-md cursor-pointer"
+                    >
+                      <Wand2 className="w-4 h-4" />
+                      Diagnose with AI Architecture Advisor
+                    </button>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-5 gap-4">
+                  {[
+                    {
+                      label: "Overall Composite Score",
+                      val: `${activeRun.evaluation.overall_composite_score.toFixed(1)} / 100`,
+                      sub: "Weighted 4-Layer Index",
+                      color: "text-emerald-400",
+                    },
+                    {
+                      label: "Layer 1: Deterministic Tests",
+                      val: `${activeRun.evaluation.deterministic_score.toFixed(1)}%`,
+                      sub: activeRun.evaluation.all_required_verifiers_passed
+                        ? "All Required Checks Passed"
+                        : "Required Check Failed",
+                      color: activeRun.evaluation.all_required_verifiers_passed
+                        ? "text-cyan-400"
+                        : "text-rose-400",
+                    },
+                    {
+                      label: "Layer 2: Topology Adherence",
+                      val: `${activeRun.evaluation.topology_adherence_pct.toFixed(1)}%`,
+                      sub: `${activeRun.evaluation.trajectory.handoffs_count} Handoffs • ${activeRun.evaluation.trajectory.topology_violations_blocked} Blocked`,
+                      color: "text-indigo-400",
+                    },
+                    {
+                      label: "Layer 3: LLM-as-a-Judge",
+                      val: `${activeRun.evaluation.judge_score.toFixed(1)} / 100`,
+                      sub: `Provider: ${activeRun.evaluation.judge.provider_used}`,
+                      color: "text-purple-400",
+                    },
+                    {
+                      label: "Total Tokens & Cost",
+                      val: `$${activeRun.evaluation.trajectory.total_cost_usd.toFixed(4)}`,
+                      sub: `${activeRun.evaluation.trajectory.total_tokens.toLocaleString()} tokens • ${activeRun.evaluation.trajectory.total_duration_ms.toFixed(0)} ms`,
+                      color: "text-amber-300",
+                    },
+                  ].map((card) => (
+                    <div
+                      key={card.label}
+                      className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1"
+                    >
+                      <div className="text-[11px] text-slate-400 font-medium">{card.label}</div>
+                      <div className={`text-2xl font-bold ${card.color}`}>{card.val}</div>
+                      <div className="text-[11px] text-slate-500">{card.sub}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-6">
+                  {/* Per-Node / Per-Subagent Resource & Token Breakdown */}
+                  <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-4">
+                    <div className="text-sm font-bold text-white flex items-center justify-between">
+                      <span>Per-Node Architecture Breakdown (Orchestrator vs Subagents)</span>
+                      <span className="text-xs font-normal text-slate-400">
+                        Token & Latency Distribution
+                      </span>
+                    </div>
+                    <div className="space-y-3">
+                      {activeRun.evaluation.trajectory.per_node_breakdown.map((node) => (
+                        <div
+                          key={node.node_id}
+                          className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs"
+                        >
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <span className="font-bold text-white">{node.node_name}</span>{" "}
+                              <span className="font-mono text-cyan-400">({node.node_id})</span>
+                            </div>
+                            <div className="font-mono text-slate-300">
+                              {node.total_tokens.toLocaleString()} tok ({node.token_share_pct}%) • $
+                              {node.cost_usd.toFixed(4)} • {node.duration_ms.toFixed(0)} ms
+                            </div>
+                          </div>
+                          {/* Token Share Bar */}
+                          <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden">
+                            <div
+                              className="h-full bg-gradient-to-r from-indigo-500 to-cyan-400"
+                              style={{ width: `${Math.max(4, node.token_share_pct)}%` }}
+                            />
+                          </div>
+                          <div className="flex items-center gap-4 text-[11px] text-slate-400">
+                            <span>Invocations: {node.invocations}</span>
+                            <span>Tool Calls: {node.tool_calls}</span>
+                            <span>Failed Tools: {node.failed_tool_calls}</span>
+                            <span>Guardrail Blocks: {node.blocked_tool_calls}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {activeRun.evaluation.trajectory.bottleneck_warnings.length > 0 && (
+                      <div className="p-3 rounded-xl bg-amber-950/50 border border-amber-800/60 space-y-1">
+                        <div className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                          <AlertTriangle className="w-3.5 h-3.5" /> Architecture Bottleneck Diagnostics
+                        </div>
+                        {activeRun.evaluation.trajectory.bottleneck_warnings.map((w, i) => (
+                          <div key={i} className="text-xs text-amber-200/90">
+                            • {w}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Layer 1 Deterministic Verifiers & Layer 3 Judge Rubric */}
+                  <div className="space-y-6">
+                    <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                      <div className="text-sm font-bold text-white">
+                        Layer 1: Deterministic Outcome Verifiers
+                      </div>
+                      {activeRun.evaluation.verifier_results.map((vr) => (
+                        <div
+                          key={vr.check_id}
+                          className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5 text-xs"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-white flex items-center gap-1.5">
+                              {vr.passed ? (
+                                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                              ) : (
+                                <XCircle className="w-4 h-4 text-rose-400" />
+                              )}
+                              {vr.name}
+                            </span>
+                            <span className="font-mono text-[11px] text-slate-400">
+                              {vr.duration_ms.toFixed(0)} ms
+                            </span>
+                          </div>
+                          {vr.output && (
+                            <pre className="p-2 rounded bg-slate-900 font-mono text-[11px] text-slate-300 overflow-x-auto max-h-36">
+                              {vr.output}
+                            </pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-3">
+                      <div className="text-sm font-bold text-white">
+                        Layer 3: Rubric Evaluation & Human Rating
+                      </div>
+                      <p className="text-xs text-slate-300 leading-relaxed">
+                        {activeRun.evaluation.judge.executive_summary}
+                      </p>
+                      <div className="space-y-2">
+                        {activeRun.evaluation.judge.dimension_scores.map((d) => (
+                          <div
+                            key={d.dimension_id}
+                            className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-xs"
+                          >
+                            <div className="flex items-center justify-between font-semibold">
+                              <span>{d.name}</span>
+                              <span className="text-indigo-300 font-mono">{d.score.toFixed(1)} / 5.0</span>
+                            </div>
+                            <div className="text-slate-400 text-[11px] mt-1">{d.rationale}</div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Human Annotation Form */}
+                      <div className="pt-3 border-t border-slate-800 flex items-center gap-2 text-xs">
+                        <select
+                          value={humanRating}
+                          onChange={(e) => setHumanRating(Number(e.target.value))}
+                          className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5"
+                        >
+                          <option value={5}>★★★★★ (5/5)</option>
+                          <option value={4}>★★★★☆ (4/5)</option>
+                          <option value={3}>★★★☆☆ (3/5)</option>
+                          <option value={2}>★★☆☆☆ (2/5)</option>
+                          <option value={1}>★☆☆☆☆ (1/5)</option>
+                        </select>
+                        <input
+                          placeholder="Add human review notes..."
+                          value={humanNotes}
+                          onChange={(e) => setHumanNotes(e.target.value)}
+                          className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                        />
+                        <button
+                          onClick={async () => {
+                            const updatedEval = await api.saveHumanGrade(
+                              activeRun.id,
+                              humanRating,
+                              humanNotes
+                            );
+                            setActiveRun({ ...activeRun, evaluation: updatedEval });
+                            notify("Saved human rating & review annotation");
+                          }}
+                          className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold cursor-pointer"
+                        >
+                          Save Grade
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Sandbox Git Diff Viewer */}
+                <div className="p-5 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                  <div className="text-sm font-bold text-white">
+                    Captured Sandbox Git Diff ({activeRun.evaluation.changed_files.join(", ") || "no files"})
+                  </div>
+                  <pre className="p-4 rounded-xl bg-slate-950 border border-slate-800 font-mono text-xs text-emerald-300 overflow-x-auto">
+                    {activeRun.evaluation.git_diff || "No task files modified."}
+                  </pre>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-20 text-slate-400">
+                Execute a run first to inspect its 4-Layer Evaluation Scorecard.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ==================== TAB 5: SIDE-BY-SIDE A/B COMPARISON MATRIX ==================== */}
+        {activeTab === "compare" && (
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-white">
+                  Side-by-Side Architecture & Cross-Harness A/B Matrix
+                </h2>
+                <p className="text-xs text-slate-400">
+                  Select 2 or more runs below to compare Composite Scores, Per-Node Tokens, Latency, and Handoff Adherence
+                </p>
+              </div>
+              <button
+                onClick={handleRunComparison}
+                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs cursor-pointer"
+              >
+                <RefreshCw className="w-3.5 h-3.5" /> Recompute A/B Matrix
+              </button>
+            </div>
+
+            {/* Run Multi-Selector */}
+            <div className="flex flex-wrap gap-2">
+              {runs.map((r) => {
+                const checked = compareIds.includes(r.id);
+                return (
+                  <button
+                    key={r.id}
+                    onClick={() => {
+                      const next = checked
+                        ? compareIds.filter((id) => id !== r.id)
+                        : [...compareIds, r.id];
+                      setCompareIds(next);
+                    }}
+                    className={`px-3 py-1.5 rounded-xl border text-xs font-medium flex items-center gap-2 cursor-pointer ${checked
+                      ? "bg-indigo-950 border-indigo-500 text-white"
+                      : "bg-slate-900 border-slate-800 text-slate-400"
+                      }`}
+                  >
+                    <input type="checkbox" checked={checked} readOnly />
+                    <span>{r.architecture_name}</span>
+                    <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-cyan-300">
+                      {r.harness}
+                    </span>
+                    <span className="text-[10px] text-slate-400">({r.task_id})</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {abResult && abResult.runs.length > 0 && (
+              <>
+                {/* Key Takeaways Banner */}
+                <div className="p-4 rounded-2xl bg-indigo-950/40 border border-indigo-700/50 space-y-1.5">
+                  <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">
+                    Automated A/B Benchmark Takeaways
+                  </div>
+                  {abResult.key_takeaways.map((tk, i) => (
+                    <div key={i} className="text-xs text-slate-200">
+                      • {tk}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Comparison Table */}
+                <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-900">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-slate-950/80 text-slate-400 uppercase text-[11px]">
+                      <tr>
+                        <th className="p-3.5">Metric / Dimension</th>
+                        {abResult.runs.map((r) => (
+                          <th key={r.id} className="p-3.5 border-l border-slate-800">
+                            <div className="font-bold text-white text-xs flex items-center gap-1.5">
+                              {r.architecture_name}
+                              {abResult.winner_run_id === r.id && (
+                                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-[10px]">
+                                  WINNER
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-cyan-400 mt-0.5">
+                              Harness: {r.harness} • Task: {r.task_id}
+                            </div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                      {[
+                        {
+                          label: "Overall Composite Score",
+                          render: (r: RunRecord) =>
+                            `${r.evaluation?.overall_composite_score.toFixed(1) ?? "--"} / 100`,
+                          highlight: true,
+                        },
+                        {
+                          label: "Deterministic Verifiers Score",
+                          render: (r: RunRecord) => `${r.evaluation?.deterministic_score.toFixed(1) ?? "--"}%`,
+                        },
+                        {
+                          label: "Topology Adherence",
+                          render: (r: RunRecord) =>
+                            `${r.evaluation?.topology_adherence_pct.toFixed(1) ?? "--"}%`,
+                        },
+                        {
+                          label: "Tool & Turn Efficiency",
+                          render: (r: RunRecord) => `${r.evaluation?.efficiency_pct.toFixed(1) ?? "--"}%`,
+                        },
+                        {
+                          label: "LLM-as-a-Judge Rubric Score",
+                          render: (r: RunRecord) => `${r.evaluation?.judge_score.toFixed(1) ?? "--"} / 100`,
+                        },
+                        {
+                          label: "Total Tokens Consumed",
+                          render: (r: RunRecord) =>
+                            r.evaluation?.trajectory.total_tokens.toLocaleString() ?? "--",
+                        },
+                        {
+                          label: "Estimated Session Cost (USD)",
+                          render: (r: RunRecord) =>
+                            `$${r.evaluation?.trajectory.total_cost_usd.toFixed(4) ?? "--"}`,
+                        },
+                        {
+                          label: "Execution Duration",
+                          render: (r: RunRecord) =>
+                            `${r.evaluation?.trajectory.total_duration_ms.toFixed(0) ?? "--"} ms`,
+                        },
+                        {
+                          label: "Subagent Handoffs Executed",
+                          render: (r: RunRecord) =>
+                            String(r.evaluation?.trajectory.handoffs_count ?? 0),
+                        },
+                      ].map((row) => (
+                        <tr key={row.label} className={row.highlight ? "bg-indigo-950/20 font-bold" : ""}>
+                          <td className="p-3.5 text-slate-300">{row.label}</td>
+                          {abResult.runs.map((r) => (
+                            <td key={r.id} className="p-3.5 border-l border-slate-800 font-mono">
+                              {row.render(r)}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {/* ==================== TAB 6: AI ARCHITECTURE ADVISOR (v2 DIFF) ==================== */}
+        {activeTab === "advisor" && (
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-indigo-400" />
+                  AI Architecture Advisor — Automated Bottleneck Diagnosis & Spec Evolution
+                </h2>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Analyzes execution telemetry, verifier failures, and subagent token distribution to propose an actionable v2 YAML blueprint diff.
+                </p>
+              </div>
+              {activeRun && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => handleLoadAdvisor(true)}
+                    disabled={isLoadingAdvisor}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs cursor-pointer"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" /> Re-Analyze Trace
+                  </button>
+                  <button
+                    onClick={() => handleApplyAdvisorPatch(false)}
+                    disabled={!advisorSuggestion}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Apply Patch to `{advisorSuggestion?.architecture_id}` (v
+                    {advisorSuggestion?.proposed_version})
+                  </button>
+                  <button
+                    onClick={() => handleApplyAdvisorPatch(true)}
+                    disabled={!advisorSuggestion}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Save as New v2 Blueprint
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!activeRun || !advisorSuggestion) return;
+                      try {
+                        const applied = await api.applyAdvisorSuggestion(activeRun.id);
+                        const targetFolder = exportDir.trim() || activeRun.sandbox_path;
+                        const exp = await api.exportBlueprint(
+                          applied.metadata.id,
+                          activeRun.harness,
+                          targetFolder,
+                          activeRun.task_id
+                        );
+                        setBlueprints(await api.listBlueprints());
+                        await handleSelectBlueprint(applied.metadata.id);
+                        notify(
+                          `Applied v${applied.metadata.version} patch AND re-deployed ${exp.files_written.length} updated ${activeRun.harness} files to ${exp.target_directory}!`
+                        );
+                      } catch (err: unknown) {
+                        notify(err instanceof Error ? err.message : "Failed to re-deploy patch", "err");
+                      }
+                    }}
+                    disabled={!advisorSuggestion}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs cursor-pointer"
+                  >
+                    <FolderOutput className="w-3.5 h-3.5" />
+                    Apply Patch & Re-Deploy to Project
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {advisorSuggestion ? (
+              <div className="grid grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  <div className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                    <div className="text-xs font-bold uppercase text-indigo-400">
+                      Executive Diagnosis Summary
+                    </div>
+                    <p className="text-sm text-white font-medium">{advisorSuggestion.summary}</p>
+                    <div className="space-y-1 pt-2">
+                      {advisorSuggestion.changes_made.map((c, i) => (
+                        <div key={i} className="text-xs text-emerald-300 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                          {c}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                      Trace Findings & Architectural Recommendations
+                    </div>
+                    {advisorSuggestion.diagnoses.map((d, idx) => (
+                      <div
+                        key={idx}
+                        className="p-4 rounded-2xl bg-slate-900 border border-slate-800 space-y-1.5 text-xs"
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className="font-mono text-cyan-300 font-semibold">
+                            {d.target_component}
+                          </span>
+                          <span
+                            className={`uppercase text-[10px] font-bold px-2 py-0.5 rounded ${d.severity === "critical"
+                              ? "bg-rose-950 text-rose-300 border border-rose-700/50"
+                              : d.severity === "warning"
+                                ? "bg-amber-950 text-amber-300 border border-amber-700/50"
+                                : "bg-indigo-950 text-indigo-300 border border-indigo-700/50"
+                              }`}
+                          >
+                            {d.severity}
+                          </span>
+                        </div>
+                        <div className="text-slate-200 font-medium">{d.finding}</div>
+                        <div className="text-slate-400">
+                          <strong className="text-emerald-400">Recommendation:</strong> {d.recommendation}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Unified YAML Spec Diff Viewer */}
+                <div className="flex flex-col rounded-2xl bg-slate-900 border border-slate-800 overflow-hidden">
+                  <div className="p-3.5 border-b border-slate-800 bg-slate-950/60 flex items-center justify-between text-xs">
+                    <span className="font-bold text-white">
+                      Proposed Blueprint Diff (v{advisorSuggestion.base_version} → v
+                      {advisorSuggestion.proposed_version})
+                    </span>
+                    <span className="font-mono text-[11px] text-slate-400">Unified YAML Patch</span>
+                  </div>
+                  <pre className="p-4 font-mono text-xs overflow-auto flex-1 leading-relaxed bg-slate-950">
+                    {advisorSuggestion.unified_yaml_diff.split("\n").map((line, i) => (
+                      <div
+                        key={i}
+                        className={
+                          line.startsWith("+") && !line.startsWith("+++")
+                            ? "text-emerald-400 bg-emerald-950/30 px-1"
+                            : line.startsWith("-") && !line.startsWith("---")
+                              ? "text-rose-400 bg-rose-950/30 px-1"
+                              : line.startsWith("@@")
+                                ? "text-cyan-400 font-bold mt-1"
+                                : "text-slate-400"
+                        }
+                      >
+                        {line}
+                      </div>
+                    ))}
+                  </pre>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-20 text-slate-400">
+                {isLoadingAdvisor
+                  ? "Analyzing execution trace and synthesizing v2 architecture blueprint..."
+                  : "Select an evaluated run and click 'Diagnose with AI Architecture Advisor'."}
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}

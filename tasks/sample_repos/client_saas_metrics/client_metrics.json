@@ -1,0 +1,41 @@
+{
+  "company": "AcmeCloud Inc.",
+  "period": "FY2026 Q4",
+  "consolidated_financials": {
+    "total_arr_usd": 24500000,
+    "arr_Display": "$24.5M",
+    "yoy_arr_growth_pct": 14.0,
+    "gross_margin_pct": 64.0,
+    "industry_benchmark_gross_margin_pct": 75.0,
+    "annual_net_burn_usd": 7200000,
+    "net_new_arr_usd": 3000000,
+    "burn_multiple": 2.4
+  },
+  "segment_breakdown": {
+    "enterprise": {
+      "arr_usd": 16500000,
+      "acv_usd": 82500,
+      "customer_count": 200,
+      "annual_logo_churn_pct": 6.0,
+      "net_dollar_retention_pct": 118.0,
+      "ltv_to_cac_ratio": 5.4,
+      "cac_payback_months": 11,
+      "sales_marketing_spend_share_pct": 42.0
+    },
+    "smb": {
+      "arr_usd": 8000000,
+      "acv_usd": 4000,
+      "customer_count": 2000,
+      "annual_logo_churn_pct": 38.0,
+      "net_dollar_retention_pct": 74.0,
+      "ltv_to_cac_ratio": 1.8,
+      "cac_payback_months": 29,
+      "sales_marketing_spend_share_pct": 58.0
+    }
+  },
+  "operational_bottlenecks": [
+    "58% of Sales & Marketing budget is spent acquiring low-ACV SMB customers ($4k ACV) that churn at 38% annually (LTV:CAC = 1.8, Payback = 29 months).",
+    "Unoptimized single-tenant GPU/cloud hosting and manual onboarding for SMB accounts depress Gross Margin to 64% (vs 75% SaaS benchmark).",
+    "Enterprise segment has outstanding unit economics (118% NDR, 5.4x LTV:CAC, 11-month payback) but is starved of AE quota capacity."
+  ]
+}

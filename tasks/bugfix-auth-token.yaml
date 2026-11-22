@@ -1,0 +1,46 @@
+api_version: harnessforge/v1
+kind: TaskSpec
+id: bugfix-auth-token
+name: "Fix Token Expiration Off-by-One & Scope Validation Bug"
+category: bugfix
+difficulty: easy
+description: "Evaluates whether the agent architecture locates two subtle authentication bugs in auth_service/token_validator.py (expired boundary condition and empty scope bypass), fixes them cleanly, and verifies with pytest."
+prompt: |
+  The authentication service in `token_validator.py` has failing security tests in `test_token_validator.py`.
+  Specifically:
+  1. Tokens whose `expires_at` timestamp equals `current_time` should be considered EXPIRED (`False`), not valid.
+  2. When `required_scope` is provided, tokens must contain that exact scope in their comma-separated `scopes` claim (substrings like `"read"` matching `"readonly"` must NOT pass).
+  Fix the implementation in `token_validator.py` and verify that all pytest tests pass.
+workspace_source: "tasks/sample_repos/auth_service"
+expected_subagents:
+  - planner
+  - coder
+  - verifier
+verifiers:
+  - id: unit_tests
+    name: "Pytest Suite (test_token_validator.py)"
+    type: pytest_pass
+    command: "pytest -v"
+    weight: 2.0
+    required: true
+    timeout_seconds: 30
+  - id: target_file_modified
+    name: "Modified token_validator.py"
+    type: git_diff_contains
+    pattern: "token_validator.py"
+    weight: 1.0
+    required: true
+    timeout_seconds: 10
+  - id: minimal_blast_radius
+    name: "Diff size within 60 lines"
+    type: git_diff_max_lines
+    max_lines: 60
+    weight: 0.5
+    required: false
+    timeout_seconds: 10
+tags:
+  - python
+  - security
+  - auth
+  - bugfix
+env_vars: {}

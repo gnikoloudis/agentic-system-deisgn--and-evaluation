@@ -1,0 +1,38 @@
+api_version: harnessforge/v1
+kind: TaskSpec
+id: refactor-order-pricing
+name: "Refactor Order Pricing Engine & Fix Tiered Discount Rounding"
+category: refactor
+difficulty: hard
+description: "Evaluates how well the architecture handles refactoring a monolithic pricing function into modular rules while fixing a stacked coupon + tax calculation bug."
+prompt: |
+  Refactor `pricing.py` and fix the failing financial accuracy tests in `test_pricing.py`:
+  1. Tiered loyalty discounts (`VIP`: 15%, `GOLD`: 10%, `SILVER`: 5%) must be applied BEFORE promotional coupon discounts.
+  2. Promotional coupons (`SAVE10` = $10.00 off, `HALF` = 50% off after loyalty discount) must never reduce the pre-tax subtotal below `0.00`.
+  3. Sales tax (`tax_rate`) must be calculated on the post-discount subtotal and rounded to 2 decimal places using standard half-up or `round(val, 2)`.
+  4. Ensure all existing and edge-case tests in `test_pricing.py` pass.
+workspace_source: "tasks/sample_repos/order_pricing"
+expected_subagents:
+  - planner
+  - coder
+  - verifier
+verifiers:
+  - id: unit_tests
+    name: "Pytest Financial Pricing Suite"
+    type: pytest_pass
+    command: "pytest -v"
+    weight: 2.0
+    required: true
+    timeout_seconds: 30
+  - id: pricing_modified
+    name: "pricing.py updated"
+    type: file_exists
+    target_path: "pricing.py"
+    weight: 0.5
+    required: true
+    timeout_seconds: 10
+tags:
+  - python
+  - refactor
+  - finance
+env_vars: {}

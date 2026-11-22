@@ -1,0 +1,72 @@
+api_version: harnessforge/v1
+kind: TaskSpec
+id: tba-focusflow-todo-app
+name: "FocusFlow To-Do Application — Full TBA Delivery Pack (From 5 Workshops & Customer Intake)"
+category: business-analysis
+difficulty: hard
+description: "Evaluates the Technical Business Analyst architecture on your specific project folder (`test_application_docs`): synthesizes the 4 Initial Customer Requirement submissions, the 5 one-hour Workshop Transcripts, and the universal TBA BoR/DoR/DoD Governance Standards into (1) `BOR_FOCUSFLOW.md` (Baselined Requirements), (2) `WORKFLOWS_AND_DELIVERY_DOCS.md` (Mermaid Process, Sequence & 5-State Lifecycle Diagrams + Data Dictionary), and (3) `EPICS_AND_USER_STORIES.md` (Epics + Wikipedia User Stories with Connextra, 3Cs bridging Dev & QA, INVEST, BDD Given/When/Then Test Cases TC-xxx, and RTM)."
+prompt: |
+  You are the Technical Business Analyst team assigned to the **FocusFlow To-Do Application** project inside this workspace.
+  1. Read and synthesize all discovery inputs in this project:
+     - `initial_customer_requirements/*.md` (4 raw stakeholder submissions)
+     - `workshops/*.md` (5 one-hour verbatim workshop transcripts between Alex Mercer TBA and the customer team)
+     - `bor_dor_and_dod/*.md` (universal TBA role governance standards for BoR, DoR, and DoD)
+  2. Author `WORKFLOWS_AND_DELIVERY_DOCS.md` containing:
+     - **End-to-End Task & Subtask Process Workflow** (`flowchart TD` Mermaid diagram covering Quick-Add, 20-subtask limit, parent completion cascade, and 30-day Trash restore to Inbox)
+     - **Recurring Task & Reminder Sequence Diagram** (`sequenceDiagram` Mermaid diagram covering `FIXED_SCHEDULE` vs `ON_COMPLETION` spawning, subtask reset, and `Jan 31 -> Feb 28 -> Mar 31` rollover)
+     - **5-State Task Lifecycle State Diagram** (`stateDiagram-v2` Mermaid diagram showing `TODO`, `IN_PROGRESS`, `BLOCKED` with mandatory 5-300 char `blocker_reason`, `COMPLETED`, `ARCHIVED`, and forbidden `BLOCKED -> COMPLETED` transition)
+     - **Data Dictionary & RBAC Contract** (`OWNER`, `EDITOR`, `VIEWER` permissions and API error codes).
+  3. Author `EPICS_AND_USER_STORIES.md` as the formal interface between the **Development Team** and the **Testing (QA) Team**, strictly following the project's `bor_dor_and_dod/` standards:
+     - **Epics Breakdown (`EPIC-01`..`EPIC-05`)** traced to baselined Business Requirements (`BR-001`..`BR-020`) and NFRs (`NFR-001`..`NFR-006`).
+     - **User Stories (`US-101`..`US-106`)** where every story includes:
+       1. **Card**: Connextra statement (`As a <role>, I want <feature>, so that <benefit>`), Story ID, Epic link, MoSCoW Priority, Story Points, and Dependencies.
+       2. **Conversation (Development Team Interface)**: Exact field bounds (Title 1-120 chars, Description <= 2000 chars Markdown with XSS sanitization, `blocker_reason` 5-300 chars, max 20 subtasks, max 50 lists, max 10 tags, 4-key default sort order, and HTTP error codes).
+       3. **Confirmation (Testing Team Interface)**: Testable BDD Gherkin (`Given ... When ... Then ...`) Acceptance Criteria with mapped QA Test Case IDs (`TC-101-01`, `TC-101-02`, etc.) covering Happy Path, Boundary Conditions, and Negative Scenarios.
+       4. **INVEST Verification Checklist**: Explicit evaluation of *Independent, Negotiable, Valuable, Estimable, Small, Testable*.
+     - **Definition of Ready (DoR) & Definition of Done (DoD)** checklists applied to FocusFlow.
+     - **Requirements Traceability Matrix (RTM)** mapping `Workshop/Intake Source` -> `BR-xxx / NFR-xxx` -> `EPIC-xx` -> `US-xxx` -> `QA Test Case (TC-xxx)`.
+workspace_source: "test_application_docs"
+expected_subagents:
+  - requirements_elicitor
+  - workflow_architect
+  - user_story_author
+  - ba_qa_gatekeeper
+verifiers:
+  - id: wikipedia_user_story_invest
+    name: "Wikipedia User Story Standard (Connextra + 3Cs Dev/QA + INVEST + DoR/DoD)"
+    type: user_story_invest_check
+    target_path: "EPICS_AND_USER_STORIES.md"
+    weight: 2.5
+    required: true
+    timeout_seconds: 15
+  - id: required_ba_sections
+    name: "Required BA Sections & Traceability Matrix Present"
+    type: markdown_sections_present
+    target_path: "EPICS_AND_USER_STORIES.md"
+    pattern: "Epics,User Stories,Conversation,Confirmation,INVEST,Definition of Ready,Definition of Done,Traceability Matrix"
+    weight: 1.5
+    required: true
+    timeout_seconds: 15
+  - id: workflow_mermaid_diagrams
+    name: "Valid Mermaid Process, Sequence & 5-State Lifecycle Diagrams Delivered"
+    type: mermaid_diagram_valid
+    target_path: "WORKFLOWS_AND_DELIVERY_DOCS.md"
+    weight: 1.5
+    required: true
+    timeout_seconds: 15
+  - id: focusflow_domain_rules_verified
+    name: "FocusFlow Workshop Domain Rules Covered (BLOCKED reason, 120 chars, 20 subtasks, 30-day Trash)"
+    type: file_contains_regex
+    target_path: "EPICS_AND_USER_STORIES.md"
+    pattern: "(120|BLOCKED|30)"
+    weight: 1.5
+    required: true
+    timeout_seconds: 15
+tags:
+  - business-analysis
+  - focusflow
+  - todo-app
+  - user-stories
+  - invest
+  - opencode
+env_vars: {}

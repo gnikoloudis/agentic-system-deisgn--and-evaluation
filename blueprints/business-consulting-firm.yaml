@@ -1,0 +1,199 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: business-consulting-firm
+  name: "Business Consulting & Strategy Practice (Partner -> Analyst -> Strategist <-> QA Principal)"
+  version: "1.0.0"
+  description: "Management consulting multi-agent architecture for OpenCode: an Engagement Partner coordinates a Quantitative Data Analyst, a Strategy Consultant (authoring executive deliverables), and a Quality Review Principal who fact-checks every financial figure and MECE recommendation."
+  tags:
+    - business-consulting
+    - strategy
+    - financial-analysis
+    - opencode
+    - mece
+  author: "HarnessForge Presets"
+orchestrator:
+  id: root_orchestrator
+  name: "Engagement Partner (Managing Director)"
+  role: "Frames the client problem using MECE hypotheses and routes work across Analyst, Strategist, and QA Principal"
+  model: "default"
+  system_prompt: |
+    You are the Managing Director & Engagement Partner of an elite Strategy & Management Consulting practice.
+    You coordinate client engagements using strict separation of duties (you MUST NOT write the final deliverable file directly):
+    1. Delegate to `market_data_analyst` to inspect all raw client data files (CSV/JSON/financials) and compute unit economics, growth rates, churn drivers, and margin bottlenecks.
+    2. Pass the verified quantitative findings to `strategy_consultant` to author the requested executive deliverable (`EXECUTIVE_MEMO.md`).
+    3. Delegate to `quality_review_principal` to fact-check every number in `EXECUTIVE_MEMO.md` against the source data and run the deliverable verification suite (`pytest -v`).
+    4. If `quality_review_principal` reports `VERDICT: FAIL`, route the missing metrics or defects back to `strategy_consultant` (up to 3 loops).
+    5. Conclude only after `quality_review_principal` confirms `VERDICT: PASS`.
+  tools:
+    - read
+    - grep
+    - glob
+    - subagent
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+      - "rm -rf /"
+  budgets:
+    max_turns: 40
+    max_cost_usd: 2.50
+    timeout_seconds: 600
+    context_compaction_threshold_pct: 80
+subagents:
+  - id: market_data_analyst
+    name: "Quantitative & Financial Data Analyst"
+    role: "Analyzes raw client financial datasets, unit economics (ARR, CAC, LTV, Churn, Gross Margin), and operational bottlenecks"
+    model: "reasoning"
+    system_prompt: |
+      You are the Quantitative & Financial Data Analyst (`market_data_analyst`). You operate in read-only mode on deliverables.
+      1. Read all data files in the workspace (`client_metrics.json`, CSVs, financial notes).
+      2. Compute exact unit economics, segment comparisons (Enterprise vs. SMB), margin leaks, and root-cause correlations.
+      3. Return a structured Quantitative Fact Pack containing exact numbers, percentages, and ratios for the Strategy Consultant.
+    tools:
+      - read
+      - grep
+      - glob
+      - bash
+    permissions:
+      allow_shell: true
+      allow_write: false
+      allow_network: false
+      allowed_commands:
+        - "python"
+      blocked_commands: []
+    max_turns: 12
+  - id: strategy_consultant
+    name: "Principal Strategy Consultant"
+    role: "Synthesizes quantitative findings into board-ready executive memos, strategic options, and 90-day turnaround roadmaps"
+    model: "coding"
+    system_prompt: |
+      You are the Principal Strategy Consultant (`strategy_consultant`).
+      Using the Quantitative Fact Pack from `market_data_analyst`, write a rigorous, MECE-structured consulting report in `EXECUTIVE_MEMO.md` containing:
+      1. **Executive Summary & Headline Recommendation**
+      2. **Diagnostic & Unit Economics Breakdown** (citing exact figures from the dataset: ARR, SMB vs Enterprise Churn, LTV:CAC, Gross Margin, Burn Multiple)
+      3. **Strategic Turnaround Pillars & 90-Day Execution Roadmap**
+      4. **Quantified Financial Impact (ARR & EBITDA projections)**
+    tools:
+      - read
+      - write
+      - edit
+      - grep
+      - glob
+    permissions:
+      allow_shell: false
+      allow_write: true
+      allow_network: false
+      allowed_commands: []
+      blocked_commands: []
+    max_turns: 18
+  - id: quality_review_principal
+    name: "QA & Fact-Checking Principal"
+    role: "Audits consulting deliverables against raw source data for numerical accuracy, MECE completeness, and verification criteria"
+    model: "fast"
+    system_prompt: |
+      You are the QA & Fact-Checking Principal (`quality_review_principal`). Never edit `EXECUTIVE_MEMO.md` yourself.
+      1. Read `EXECUTIVE_MEMO.md` and cross-check every metric against `client_metrics.json`.
+      2. Run `pytest -v` to execute the automated deliverable rubric checks.
+      3. Output `VERDICT: PASS` only if all numerical citations and structural checks pass; otherwise output `VERDICT: FAIL` with exact items for `strategy_consultant` to fix.
+    tools:
+      - read
+      - grep
+      - bash
+    permissions:
+      allow_shell: true
+      allow_write: false
+      allow_network: false
+      allowed_commands:
+        - "pytest"
+        - "python -m pytest"
+      blocked_commands: []
+    max_turns: 10
+skills:
+  - id: mece-framework
+    name: "MECE & Unit Economics Consulting Framework"
+    description: "Structured checklist for B2B SaaS & Corporate Strategy diagnostics (ARR waterfall, LTV:CAC, Rule of 40, 90-day roadmap)"
+    trigger_command: "/mece-audit"
+    instructions: |
+      Ensure every consulting memo covers:
+      - Headline Answer-First Thesis (Pyramid Principle)
+      - Segment-level Unit Economics (Enterprise vs SMB churn & LTV:CAC)
+      - Cost structure & Gross Margin bridge
+      - Concrete 30/60/90-day prioritized action plan with KPI targets
+hooks:
+  - id: partner_delegation_guard
+    event: PreToolUse
+    matcher: "Write|Edit"
+    target_agent: root_orchestrator
+    action: block
+    message: "Engagement Partner must delegate report authoring to `strategy_consultant`."
+mcp_servers: []
+topology:
+  pattern: generator-verifier-loop
+  enforcement_mode: dual
+  entry_node: root_orchestrator
+  edges:
+    - id: e1_quant_analysis
+      source: root_orchestrator
+      target: market_data_analyst
+      condition: "Phase 1: Extract quantitative facts & unit economics"
+      order: 1
+      required: true
+      max_loops: 1
+    - id: e2_draft_strategy
+      source: market_data_analyst
+      target: strategy_consultant
+      condition: "Phase 2: Author EXECUTIVE_MEMO.md from Fact Pack"
+      order: 2
+      required: true
+      max_loops: 1
+    - id: e3_fact_check
+      source: strategy_consultant
+      target: quality_review_principal
+      condition: "Phase 3: Audit numbers & run deliverable checks"
+      order: 3
+      required: true
+      max_loops: 3
+    - id: e4_revision_loop
+      source: quality_review_principal
+      target: strategy_consultant
+      condition: "If VERDICT == FAIL (Revision loop <= 3)"
+      order: 4
+      required: false
+      max_loops: 3
+    - id: e_skill_mece_strategist
+      source: strategy_consultant
+      target: mece-framework
+      condition: "Structures memo with /mece-audit Pyramid Principle"
+      order: 5
+      required: false
+      max_loops: 1
+    - id: e_skill_mece_qa
+      source: quality_review_principal
+      target: mece-framework
+      condition: "Audits deliverable against /mece-audit checklist"
+      order: 6
+      required: false
+      max_loops: 1
+visual_layout:
+  nodes:
+    root_orchestrator:
+      x: 380
+      y: 40
+    market_data_analyst:
+      x: 90
+      y: 230
+    strategy_consultant:
+      x: 380
+      y: 230
+    quality_review_principal:
+      x: 670
+      y: 230
+    mece-framework:
+      x: 380
+      y: 430
+    partner_delegation_guard:
+      x: 670
+      y: 40

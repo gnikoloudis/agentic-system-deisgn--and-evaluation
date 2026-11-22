@@ -1,0 +1,39 @@
+# Python & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# Local runtime state, databases, sandboxes & scratch exports
+.harness-data/
+.harness-workspaces/
+.harness-eval/
+tba_opencode_workspace/
+.opencode/
+AGENTS.md
+opencode.json
+execution.log
+*.log
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# OS & Editor artifacts
+.DS_Store
+Thumbs.db
+*.swp
+*.swo

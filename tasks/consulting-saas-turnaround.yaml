@@ -1,0 +1,49 @@
+api_version: harnessforge/v1
+kind: TaskSpec
+id: consulting-saas-turnaround
+name: "B2B SaaS Growth & Margin Turnaround Strategy Case (AcmeCloud)"
+category: custom
+difficulty: medium
+description: "Evaluates a Business Consulting agent architecture on analyzing a real multi-segment SaaS financial dataset (`client_metrics.json`), diagnosing an SMB churn and cloud-hosting margin crisis, and producing a board-ready `EXECUTIVE_MEMO.md`."
+prompt: |
+  You are engaged by the Board of Directors of **AcmeCloud Inc.** to diagnose why net growth has stalled and cash burn has spiked.
+  1. Analyze the financial and operational dataset in `client_metrics.json`.
+  2. Write a comprehensive, board-ready strategy report in `EXECUTIVE_MEMO.md` that includes:
+     - **Executive Summary**: The primary root causes of the slowdown and your headline strategic recommendation.
+     - **Quantitative Diagnostic & Unit Economics**: Cite the exact metrics from `client_metrics.json` comparing the **Enterprise** vs **SMB** segments (including total ARR `$24.5M`, SMB annualized churn `38%`, SMB LTV:CAC `1.8`, Enterprise Net Dollar Retention `118%`, Enterprise LTV:CAC `5.4`, Gross Margin `64%`, and Burn Multiple `2.4`).
+     - **90-Day Turnaround Roadmap**: Concrete action items across Pricing/Packaging, Go-To-Market reallocation toward Enterprise, and Cloud Infrastructure COGS optimization to reach a `75%` Gross Margin target.
+  3. Run `pytest -v` to verify that `EXECUTIVE_MEMO.md` meets all quantitative accuracy and structural completeness checks.
+workspace_source: "tasks/sample_repos/client_saas_metrics"
+expected_subagents:
+  - market_data_analyst
+  - strategy_consultant
+  - quality_review_principal
+verifiers:
+  - id: memo_exists
+    name: "EXECUTIVE_MEMO.md deliverable created"
+    type: file_exists
+    target_path: "EXECUTIVE_MEMO.md"
+    weight: 1.0
+    required: true
+    timeout_seconds: 10
+  - id: consulting_quality_checks
+    name: "Quantitative Fact-Check & MECE Structure Suite (pytest)"
+    type: pytest_pass
+    command: "pytest -v"
+    weight: 2.0
+    required: true
+    timeout_seconds: 30
+  - id: cites_unit_economics
+    name: "Cites key segment unit economics (38% SMB churn & 118% Enterprise NDR)"
+    type: file_contains_regex
+    target_path: "EXECUTIVE_MEMO.md"
+    pattern: "(38%|118%)"
+    weight: 1.0
+    required: true
+    timeout_seconds: 10
+tags:
+  - business-consulting
+  - strategy
+  - financial-analysis
+  - opencode
+env_vars: {}

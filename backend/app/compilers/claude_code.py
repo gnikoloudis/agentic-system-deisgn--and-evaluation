@@ -1,0 +1,227 @@
+"""Claude Code Harness Adapter.
+
+Compiles AgentArchitecture into:
+- CLAUDE.md
+- .claude/agents/<id>.md
+- .claude/skills/<id>/SKILL.md
+- .claude/commands/<id>.md
+- .claude/settings.local.json
+- .mcp.json
+- .harness-eval/*
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Dict, List
+
+from app.compilers.base import HarnessAdapter
+from app.compilers.hook_templates import generate_harness_eval_files
+from app.config import settings
+from app.schemas.blueprint import AgentArchitecture, CompilationResult, CompiledFile, HarnessType
+
+
+CLAUDE_TOOL_NAME_MAP: Dict[str, str] = {
+    "read": "Read",
+    "write": "Write",
+    "edit": "Edit",
+    "grep": "Grep",
+    "glob": "Glob",
+    "bash": "Bash",
+    "subagent": "Task",
+}
+
+
+class ClaudeCodeAdapter(HarnessAdapter):
+    harness_type: HarnessType = "claude_code"
+
+    def _map_tools(self, tools: List[str], allow_write: bool, allow_shell: bool) -> List[str]:
+        mapped: List[str] = []
+        for t in tools:
+            canonical = CLAUDE_TOOL_NAME_MAP.get(t.lower(), t)
+            if canonical in ("Write", "Edit", "MultiEdit") and not allow_write:
+                continue
+            if canonical == "Bash" and not allow_shell:
+                continue
+            if canonical not in mapped:
+                mapped.append(canonical)
+        return mapped
+
+    def compile(
+        self,
+        blueprint: AgentArchitecture,
+        run_id: str = "preview-run",
+        server_url: str = "http://127.0.0.1:8765",
+    ) -> CompilationResult:
+        files: List[CompiledFile] = []
+
+        # 1. CLAUDE.md (Root Orchestrator & Topology Routing Contract)
+        claude_md_content = self.render_routing_contract_markdown(blueprint)
+        files.append(
+            CompiledFile(
+                relative_path="CLAUDE.md",
+                content=claude_md_content,
+                description="Claude Code root project memory & multi-agent topology routing contract",
+            )
+        )
+
+        # 2. Subagents -> .claude/agents/<id>.md
+        for sa in blueprint.subagents:
+            sa_tools = self._map_tools(sa.tools, sa.permissions.allow_write, sa.permissions.allow_shell)
+            tools_str = ", ".join(sa_tools)
+            model_id = self.resolve_agent_model(sa)
+            subagent_md = (
+                "---\n"
+                f"name: {sa.id}\n"
+                f"description: {sa.role}\n"
+                f"tools: {tools_str}\n"
+                f"model: {model_id}\n"
+                "---\n\n"
+                f"# {sa.name} (`{sa.id}`)\n\n"
+                f"{sa.system_prompt.strip()}\n"
+            )
+            files.append(
+                CompiledFile(
+                    relative_path=f".claude/agents/{sa.id}.md",
+                    content=subagent_md,
+                    description=f"Claude Code native subagent definition for `{sa.id}`",
+                )
+            )
+
+        # 3. Skills & Slash Commands -> .claude/skills/<id>/SKILL.md and .claude/commands/<id>.md
+        for sk in blueprint.skills:
+            skill_md = (
+                "---\n"
+                f"name: {sk.id}\n"
+                f"description: {sk.description}\n"
+                "---\n\n"
+                f"# {sk.name}\n\n"
+                f"{sk.instructions.strip()}\n"
+            )
+            files.append(
+                CompiledFile(
+                    relative_path=f".claude/skills/{sk.id}/SKILL.md",
+                    content=skill_md,
+                    description=f"Claude Code skill definition for `{sk.id}`",
+                )
+            )
+            files.append(
+                CompiledFile(
+                    relative_path=f".claude/commands/{sk.id}.md",
+                    content=f"{sk.instructions.strip()}\n",
+                    description=f"Claude Code slash command `/{sk.id}`",
+                )
+            )
+
+        # 4. Hooks & Permissions -> .claude/settings.local.json
+        settings_payload = {
+            "permissions": {
+                "allow": [
+                    "Read",
+                    "Grep",
+                    "Glob",
+                    "Task",
+                    "Bash(pytest*)",
+                    "Bash(python*)",
+                    "Bash(git status*)",
+                    "Bash(git diff*)",
+                ],
+                "deny": [
+                    f"Bash({cmd}*)" for cmd in blueprint.orchestrator.permissions.blocked_commands
+                ],
+            },
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": ".*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python .harness-eval/hook_runner.py PreToolUse",
+                            }
+                        ],
+                    }
+                ],
+                "PostToolUse": [
+                    {
+                        "matcher": ".*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python .harness-eval/hook_runner.py PostToolUse",
+                            }
+                        ],
+                    }
+                ],
+                "SubagentStop": [
+                    {
+                        "matcher": ".*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python .harness-eval/hook_runner.py SubagentStop",
+                            }
+                        ],
+                    }
+                ],
+                "Stop": [
+                    {
+                        "matcher": ".*",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                "command": "python .harness-eval/hook_runner.py Stop",
+                            }
+                        ],
+                    }
+                ],
+            },
+        }
+        files.append(
+            CompiledFile(
+                relative_path=".claude/settings.local.json",
+                content=json.dumps(settings_payload, indent=2),
+                description="Claude Code permissions & lifecycle telemetry/guardrail hooks",
+            )
+        )
+
+        # 5. MCP Servers -> .mcp.json
+        if blueprint.mcp_servers:
+            mcp_payload = {
+                "mcpServers": {
+                    srv.id: {
+                        "command": srv.command,
+                        "args": srv.args,
+                        "env": srv.env,
+                    }
+                    for srv in blueprint.mcp_servers
+                }
+            }
+            files.append(
+                CompiledFile(
+                    relative_path=".mcp.json",
+                    content=json.dumps(mcp_payload, indent=2),
+                    description="Claude Code project MCP server bindings",
+                )
+            )
+
+        # 6. Runtime topology state machine & telemetry emitter -> .harness-eval/*
+        files.extend(generate_harness_eval_files(blueprint, "claude_code", run_id, server_url))
+
+        orch_model = self.resolve_agent_model(blueprint.orchestrator)
+        return CompilationResult(
+            architecture_id=blueprint.metadata.id,
+            architecture_version=blueprint.metadata.version,
+            harness="claude_code",
+            files=files,
+            cli_preview_command=(
+                f'{settings.claude_binary} -p "<TASK_PROMPT>" --model {orch_model} '
+                f"--output-format stream-json --verbose --max-turns {blueprint.orchestrator.budgets.max_turns}"
+            ),
+            interactive_launch_command=f"{settings.claude_binary}",
+            notes=[
+                "Compiled root orchestrator and topology matrix into CLAUDE.md",
+                f"Generated {len(blueprint.subagents)} subagent(s) under .claude/agents/",
+                "Injected dual-mode PreToolUse/PostToolUse/SubagentStop/Stop hooks in .claude/settings.local.json",
+            ],
+        )

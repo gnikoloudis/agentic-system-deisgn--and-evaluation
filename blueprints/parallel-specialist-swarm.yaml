@@ -1,0 +1,174 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: parallel-specialist-swarm
+  name: Parallel Specialist Swarm (Backend + Security + Test Synthesizer)
+  version: 1.0.0
+  description: Swarm dispatcher architecture where a Triage Router dispatches domain-specific implementation
+    to a Backend Specialist, fans out in parallel to a Security Auditor and Test Synthesizer, and consolidates
+    results.
+  tags:
+  - swarm
+  - parallel
+  - security
+  - high-coverage
+  author: HarnessForge Presets
+orchestrator:
+  id: root_orchestrator
+  name: Swarm Triage Coordinator
+  role: Dispatches implementation and coordinates parallel security & test synthesis review
+  model: default
+  system_prompt: 'You are the Swarm Triage Coordinator.
+
+    Orchestrate the specialist subagents in the following topology:
+
+    1. Dispatch `backend_specialist` to implement the core functional change.
+
+    2. Dispatch `security_auditor` and `test_synthesizer` to audit security invariants and expand edge-case
+    unit tests.
+
+    3. Synthesize findings and ensure all tests pass before completing.
+
+    '
+  tools:
+  - read
+  - grep
+  - glob
+  - subagent
+  permissions:
+    allow_shell: true
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands: []
+  budgets:
+    max_turns: 50
+    max_cost_usd: 4.0
+    timeout_seconds: 720
+    context_compaction_threshold_pct: 75
+subagents:
+- id: backend_specialist
+  name: Core Backend Specialist
+  role: Implements core business logic, algorithms, and data structures
+  model: coding
+  system_prompt: 'Focus exclusively on implementing clean, performant core logic inside the target module.
+
+    '
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  permissions:
+    allow_shell: false
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands: []
+  max_turns: 18
+- id: security_auditor
+  name: Security & Edge-Case Auditor
+  role: Audits changes for injection, token validation bypass, overflow, and boundary vulnerabilities
+  model: reasoning
+  system_prompt: 'Audit the modified files for boundary bugs, authentication bypasses, race conditions,
+    or malformed input handling.
+
+    Report any vulnerability clearly so it can be patched or covered by tests.
+
+    '
+  tools:
+  - read
+  - grep
+  - glob
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands: []
+  max_turns: 12
+- id: test_synthesizer
+  name: Adversarial Test Synthesizer
+  role: Writes comprehensive pytest edge-case tests and runs the test suite
+  model: coding
+  system_prompt: 'Write thorough pytest unit tests covering normal paths, boundary conditions, and error
+    cases.
+
+    Execute `pytest -v` and confirm all tests pass.
+
+    '
+  tools:
+  - read
+  - write
+  - edit
+  - bash
+  - grep
+  permissions:
+    allow_shell: true
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands: []
+  max_turns: 16
+skills:
+- id: security-checklist
+  name: OWASP & Boundary Security Checklist
+  description: Check token expiration, signature verification, and empty/null inputs
+  instructions: 'Verify strict equality checks, expiration boundary conditions (`>=` vs `>`), and input
+    type validation.
+
+    '
+  trigger_command: /security-check
+hooks:
+- id: guard_test_files_only_for_synthesizer
+  event: PreToolUse
+  matcher: Write|Edit
+  target_agent: security_auditor
+  action: block
+  command: null
+  message: security_auditor is a read-only critic node and cannot modify files.
+mcp_servers: []
+topology:
+  pattern: parallel-swarm
+  enforcement_mode: dual
+  entry_node: root_orchestrator
+  edges:
+  - id: e1_backend
+    source: root_orchestrator
+    target: backend_specialist
+    condition: 'Phase 1: Core feature/fix implementation'
+    order: 1
+    required: true
+    max_loops: 2
+  - id: e2_sec_fanout
+    source: backend_specialist
+    target: security_auditor
+    condition: 'Phase 2a (Parallel): Security boundary audit'
+    order: 2
+    required: true
+    max_loops: 2
+  - id: e3_test_fanout
+    source: backend_specialist
+    target: test_synthesizer
+    condition: 'Phase 2b (Parallel): Adversarial test generation & pytest run'
+    order: 2
+    required: true
+    max_loops: 2
+visual_layout:
+  nodes:
+    root_orchestrator:
+      x: 400.0
+      y: 40.0
+    backend_specialist:
+      x: 400.0
+      y: 200.0
+    security_auditor:
+      x: 180.0
+      y: 380.0
+    test_synthesizer:
+      x: 620.0
+      y: 380.0
+    security-checklist:
+      x: 180.0
+      y: 530.0
