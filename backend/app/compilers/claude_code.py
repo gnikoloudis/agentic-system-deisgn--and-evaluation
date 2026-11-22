@@ -88,17 +88,18 @@ class ClaudeCodeAdapter(HarnessAdapter):
                 )
             )
 
-        # 3. Skills & Slash Commands -> .claude/skills/<id>/** (including references/scripts/assets) and .claude/commands/<id>.md
-        from app.compilers.base import load_skill_bundle_files
+        # 3. Skills & Slash Commands -> .claude/skills/<slug>/** (including references/scripts/assets) and .claude/commands/<slug>.md
+        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
 
         for sk in blueprint.skills:
-            bundle_files, effective_body = load_skill_bundle_files(sk, f".claude/skills/{sk.id}")
+            slug = resolve_effective_skill_slug(sk)
+            bundle_files, effective_body = load_skill_bundle_files(sk, f".claude/skills/{slug}")
             files.extend(bundle_files)
             files.append(
                 CompiledFile(
-                    relative_path=f".claude/commands/{sk.id}.md",
+                    relative_path=f".claude/commands/{slug}.md",
                     content=f"{effective_body.strip()}\n",
-                    description=f"Claude Code slash command `/{sk.id}`",
+                    description=f"Claude Code slash command `/{slug}`",
                 )
             )
 

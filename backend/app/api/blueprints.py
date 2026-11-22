@@ -116,6 +116,17 @@ def api_delete_blueprint(architecture_id: str) -> Dict[str, Any]:
     return {"deleted": True, "id": architecture_id}
 
 
+class InlineCompilePreviewRequest(BaseModel):
+    blueprint: AgentArchitecture
+    harness: HarnessType
+
+
+@router.post("/compile-preview", response_model=CompilationResult)
+def api_compile_preview_inline(req: InlineCompilePreviewRequest) -> CompilationResult:
+    """Compile an in-memory blueprint (including unsaved studio edits) into native harness files for live preview."""
+    return compile_architecture(req.blueprint, harness=req.harness, run_id="preview-run")
+
+
 @router.get("/{architecture_id}/compile/{harness}", response_model=CompilationResult)
 def api_compile_preview(architecture_id: str, harness: HarnessType) -> CompilationResult:
     found = get_blueprint(architecture_id)

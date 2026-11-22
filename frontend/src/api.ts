@@ -64,6 +64,11 @@ export const api = {
     }),
   compilePreview: (architectureId: string, harness: HarnessType) =>
     request<CompilationResult>(`/blueprints/${architectureId}/compile/${harness}`),
+  compilePreviewInline: (blueprint: AgentArchitecture, harness: HarnessType) =>
+    request<CompilationResult>("/blueprints/compile-preview", {
+      method: "POST",
+      body: JSON.stringify({ blueprint, harness }),
+    }),
   exportBlueprint: (
     architectureId: string,
     harness: HarnessType,

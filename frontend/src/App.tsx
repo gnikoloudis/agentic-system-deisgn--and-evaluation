@@ -153,14 +153,14 @@ export default function App() {
     loadInitialData();
   }, [loadInitialData]);
 
-  // Refresh compiled preview whenever selected blueprint or target harness changes
+  // Refresh compiled preview whenever selected blueprint (including live edits) or target harness changes
   useEffect(() => {
     if (!selectedBlueprint) return;
     api
-      .compilePreview(selectedBlueprint.metadata.id, previewHarness)
+      .compilePreviewInline(selectedBlueprint, previewHarness)
       .then((res) => {
         setCompiledResult(res);
-        setSelectedCompiledFileIdx(0);
+        setSelectedCompiledFileIdx((prev) => (prev < res.files.length ? prev : 0));
       })
       .catch(() => { });
   }, [selectedBlueprint, previewHarness]);
@@ -290,20 +290,82 @@ export default function App() {
     setSelectedNodeId(newId);
   };
 
+  const sanitizeSlug = (raw: string) =>
+    raw
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+  const renameSkillId = (
+    oldId: string,
+    rawNewId: string,
+    extraPatch?: Partial<AgentArchitecture["skills"][number]>
+  ) => {
+    if (!selectedBlueprint) return;
+    const candidate = sanitizeSlug(rawNewId) || oldId;
+    const takenIds = new Set<string>([
+      selectedBlueprint.orchestrator.id,
+      ...selectedBlueprint.subagents.map((s) => s.id),
+      ...selectedBlueprint.hooks.map((h) => h.id),
+      ...selectedBlueprint.skills.filter((sk) => sk.id !== oldId).map((sk) => sk.id),
+    ]);
+    const finalId = takenIds.has(candidate) ? oldId : candidate;
+
+    const nextLayoutNodes = { ...selectedBlueprint.visual_layout.nodes };
+    if (finalId !== oldId && nextLayoutNodes[oldId]) {
+      nextLayoutNodes[finalId] = nextLayoutNodes[oldId];
+      delete nextLayoutNodes[oldId];
+    }
+
+    const updated: AgentArchitecture = {
+      ...selectedBlueprint,
+      skills: selectedBlueprint.skills.map((sk) =>
+        sk.id === oldId
+          ? {
+            ...sk,
+            ...extraPatch,
+            id: finalId,
+            trigger_command: `/${finalId}`,
+          }
+          : sk
+      ),
+      topology: {
+        ...selectedBlueprint.topology,
+        edges: selectedBlueprint.topology.edges.map((ed) => ({
+          ...ed,
+          source: ed.source === oldId ? finalId : ed.source,
+          target: ed.target === oldId ? finalId : ed.target,
+        })),
+      },
+      visual_layout: {
+        nodes: nextLayoutNodes,
+      },
+    };
+    handleCanvasBlueprintChange(updated);
+    if (finalId !== oldId) {
+      setSelectedNodeId(finalId);
+    }
+  };
+
   const handleAddSkill = () => {
     if (!selectedBlueprint) return;
-    const nextIdx = selectedBlueprint.skills.length + 1;
-    const newId = `ba-template-${nextIdx}`;
+    let nextIdx = selectedBlueprint.skills.length + 1;
+    const existingIds = new Set(selectedBlueprint.skills.map((s) => s.id));
+    while (existingIds.has(`custom-skill-${nextIdx}`)) {
+      nextIdx += 1;
+    }
+    const newId = `custom-skill-${nextIdx}`;
     const updated: AgentArchitecture = {
       ...selectedBlueprint,
       skills: [
         ...selectedBlueprint.skills,
         {
           id: newId,
-          name: `Custom BA Template ${nextIdx}`,
-          description: "Custom document template or domain checklist for subagents",
+          name: `Custom Skill ${nextIdx}`,
+          description: "Reusable domain skill, workflow, or document template for subagents",
           trigger_command: `/${newId}`,
-          instructions: "1. Follow custom structure.\n2. Include acceptance criteria and traceability.",
+          instructions: "1. Follow skill workflow.\n2. Include acceptance criteria and validation checks.",
         },
       ],
       visual_layout: {
@@ -1325,7 +1387,7 @@ export default function App() {
                     <div className="space-y-3">
                       <div className="flex items-center justify-between">
                         <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
-                          Skill / Document Template: /{selectedSkill.id}
+                          Skill: /{selectedSkill.id}
                         </span>
                         <button
                           onClick={() => {
@@ -1340,6 +1402,30 @@ export default function App() {
                         >
                           <Trash2 className="w-3.5 h-3.5" /> Remove
                         </button>
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">
+                          Skill ID / Folder Slug <span className="text-[10px] font-mono text-emerald-400">(skills/{selectedSkill.id}/SKILL.md)</span>
+                        </label>
+                        <input
+                          key={`skill-id-${selectedSkill.id}`}
+                          defaultValue={selectedSkill.id}
+                          onBlur={(e) => {
+                            if (e.target.value.trim() && e.target.value.trim() !== selectedSkill.id) {
+                              renameSkillId(selectedSkill.id, e.target.value);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const val = (e.target as HTMLInputElement).value;
+                              if (val.trim() && val.trim() !== selectedSkill.id) {
+                                renameSkillId(selectedSkill.id, val);
+                              }
+                            }
+                          }}
+                          placeholder="e.g. react-expert"
+                          className="w-full bg-slate-950 border border-emerald-700/60 rounded-lg px-2.5 py-1.5 font-mono text-emerald-300"
+                        />
                       </div>
                       <div>
                         <label className="block text-slate-400 mb-1">Skill / Template Title</label>
@@ -1399,23 +1485,14 @@ export default function App() {
                               }
                               try {
                                 const info = await api.inspectSkillDir(dir);
-                                const updatedSkills = selectedBlueprint.skills.map((sk) =>
-                                  sk.id === selectedSkill.id
-                                    ? {
-                                      ...sk,
-                                      name: info.name || sk.name,
-                                      description: info.description || sk.description,
-                                      source_dir: info.source_dir,
-                                      instructions: info.instructions_preview || sk.instructions,
-                                    }
-                                    : sk
-                                );
-                                handleCanvasBlueprintChange({
-                                  ...selectedBlueprint,
-                                  skills: updatedSkills,
+                                renameSkillId(selectedSkill.id, info.id || selectedSkill.id, {
+                                  name: info.name || selectedSkill.name,
+                                  description: info.description || selectedSkill.description,
+                                  source_dir: info.source_dir,
+                                  instructions: info.instructions_preview || selectedSkill.instructions,
                                 });
                                 notify(
-                                  `Loaded '${info.name}' (${info.files.length} files: ${info.counts.references} refs, ${info.counts.scripts} scripts, ${info.counts.assets + info.counts.resources} assets/resources)`
+                                  `Loaded '/${info.id}' (${info.files.length} files: ${info.counts.references} refs, ${info.counts.scripts} scripts, ${info.counts.assets + info.counts.resources} assets/resources)`
                                 );
                               } catch (err: unknown) {
                                 notify(err instanceof Error ? err.message : "Failed to inspect skill folder", "err");

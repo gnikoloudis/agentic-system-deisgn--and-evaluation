@@ -121,16 +121,17 @@ class OpenCodeAdapter(HarnessAdapter):
                 },
             }
 
-        # 3. Skills & Commands -> .opencode/skills/<id>/** (including references/scripts/assets) + .opencode/command/<id>.md
-        from app.compilers.base import load_skill_bundle_files
+        # 3. Skills & Commands -> .opencode/skills/<slug>/** (including references/scripts/assets) + .opencode/command/<slug>.md
+        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
 
         for sk in blueprint.skills:
-            bundle_files, effective_body = load_skill_bundle_files(sk, f".opencode/skills/{sk.id}")
+            slug = resolve_effective_skill_slug(sk)
+            bundle_files, effective_body = load_skill_bundle_files(sk, f".opencode/skills/{slug}")
             files.extend(bundle_files)
             ref_hint = ""
             if len(bundle_files) > 1:
                 ref_hint = (
-                    f"\n> Skill bundle installed at `.opencode/skills/{sk.id}/` "
+                    f"\n> Skill bundle installed at `.opencode/skills/{slug}/` "
                     f"({len(bundle_files) - 1} supporting reference/script/asset file(s) available relative to that folder).\n\n"
                 )
             cmd_md = (
@@ -142,9 +143,9 @@ class OpenCodeAdapter(HarnessAdapter):
             )
             files.append(
                 CompiledFile(
-                    relative_path=f".opencode/command/{sk.id}.md",
+                    relative_path=f".opencode/command/{slug}.md",
                     content=cmd_md,
-                    description=f"OpenCode custom command `/{sk.id}`",
+                    description=f"OpenCode custom command `/{slug}`",
                 )
             )
 

@@ -129,13 +129,14 @@ class AntigravityAdapter(HarnessAdapter):
                 )
             )
 
-        # 3. Skills -> .agents/skills/<id>/** and .agent/skills/<id>/** (supports folder-backed references/scripts/assets)
-        from app.compilers.base import load_skill_bundle_files
+        # 3. Skills -> .agents/skills/<slug>/** and .agent/skills/<slug>/** (supports folder-backed references/scripts/assets)
+        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
 
         for sk in blueprint.skills:
-            bundle_new, _ = load_skill_bundle_files(sk, f".agents/skills/{sk.id}")
+            slug = resolve_effective_skill_slug(sk)
+            bundle_new, _ = load_skill_bundle_files(sk, f".agents/skills/{slug}")
             files.extend(bundle_new)
-            bundle_legacy, _ = load_skill_bundle_files(sk, f".agent/skills/{sk.id}")
+            bundle_legacy, _ = load_skill_bundle_files(sk, f".agent/skills/{slug}")
             files.extend(bundle_legacy)
 
         builtin_skills: List[Dict[str, str]] = [

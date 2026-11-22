@@ -295,9 +295,36 @@ def inspect_skill_directory(source_dir: str) -> Dict[str, Any]:
     }
 
 
+def _sanitize_skill_slug(raw: str) -> str:
+    slug = re.sub(r"[^a-z0-9_-]+", "-", (raw or "").strip().lower()).strip("-")
+    return slug or "custom-skill"
+
+
+def resolve_effective_skill_slug(sk: SkillSpec) -> str:
+    """Resolve the canonical directory/command slug for a skill.
+
+    If `source_dir` is set and `sk.id` is still a generic placeholder (e.g. `ba-template-2` or
+    `custom-skill-1`), automatically adopt the skill's real `name:` from `SKILL.md` frontmatter
+    (or the folder name) so deployed directories and `SKILL.md` never drift out of sync.
+    """
+    current_slug = _sanitize_skill_slug(sk.id)
+    is_placeholder = bool(re.match(r"^(ba-template|custom-skill|skill)[-_]?\d*$", current_slug))
+    resolved = resolve_skill_source_dir(sk.source_dir or "")
+    if resolved and is_placeholder:
+        skill_md_path = resolved / "SKILL.md"
+        if skill_md_path.exists():
+            meta, _ = _parse_skill_frontmatter(skill_md_path.read_text(encoding="utf-8", errors="replace"))
+            fm_name = str(meta.get("name") or "").strip()
+            if fm_name:
+                return _sanitize_skill_slug(fm_name)
+        return _sanitize_skill_slug(resolved.name)
+    return current_slug
+
+
 def load_skill_bundle_files(sk: SkillSpec, target_skill_root: str) -> tuple[List[CompiledFile], str]:
     """Compile a SkillSpec into one or more CompiledFiles (including references/, scripts/, resources/, assets/ if source_dir is set)."""
     root = target_skill_root.rstrip("/")
+    slug = resolve_effective_skill_slug(sk)
     resolved = resolve_skill_source_dir(sk.source_dir or "")
     compiled: List[CompiledFile] = []
 
@@ -325,14 +352,14 @@ def load_skill_bundle_files(sk: SkillSpec, target_skill_root: str) -> tuple[List
                 CompiledFile(
                     relative_path=f"{root}/{rel_posix}",
                     content=text_content,
-                    description=f"Bundled skill file `{rel_posix}` for skill `{sk.id}`",
+                    description=f"Bundled skill file `{rel_posix}` for skill `{slug}`",
                     executable=is_exec,
                 )
             )
         if not has_skill_md:
             fallback_md = (
                 "---\n"
-                f"name: {sk.id}\n"
+                f"name: {slug}\n"
                 f"description: {json.dumps(sk.description)}\n"
                 "---\n\n"
                 f"# {sk.name}\n\n"
@@ -343,7 +370,7 @@ def load_skill_bundle_files(sk: SkillSpec, target_skill_root: str) -> tuple[List
                 CompiledFile(
                     relative_path=f"{root}/SKILL.md",
                     content=fallback_md,
-                    description=f"Skill definition `SKILL.md` for `{sk.id}`",
+                    description=f"Skill definition `SKILL.md` for `{slug}`",
                 ),
             )
         return compiled, effective_body
@@ -351,7 +378,7 @@ def load_skill_bundle_files(sk: SkillSpec, target_skill_root: str) -> tuple[List
     # Standard inline skill (single SKILL.md)
     skill_md = (
         "---\n"
-        f"name: {sk.id}\n"
+        f"name: {slug}\n"
         f"description: {json.dumps(sk.description)}\n"
         "---\n\n"
         f"# {sk.name}\n\n"
@@ -361,7 +388,7 @@ def load_skill_bundle_files(sk: SkillSpec, target_skill_root: str) -> tuple[List
         CompiledFile(
             relative_path=f"{root}/SKILL.md",
             content=skill_md,
-            description=f"Skill definition for `{sk.id}`",
+            description=f"Skill definition for `{slug}`",
         )
     )
     return compiled, sk.instructions

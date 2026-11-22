@@ -345,6 +345,26 @@ def test_folder_backed_skill_bundles_references_and_scripts(client: TestClient, 
         assert f"{prefix}/scripts/check.py" in paths
         assert f"{prefix}/assets/logo.svg" in paths
 
+    # 3. Placeholder ID (e.g. `ba-template-2`) with source_dir pointing to `react-expert` must compile to `react-expert`, NOT `ba-template-2`
+    bp_placeholder = found[0].model_copy(deep=True)
+    bp_placeholder.skills.append(
+        SkillSpec(
+            id="ba-template-2",
+            name="Custom BA Template 2",
+            description="Placeholder",
+            source_dir=str(skill_dir),
+        )
+    )
+    inline_resp = client.post(
+        "/api/blueprints/compile-preview",
+        json={"blueprint": bp_placeholder.model_dump(mode="json"), "harness": "antigravity"},
+    )
+    assert inline_resp.status_code == 200
+    inline_paths = {f["relative_path"] for f in inline_resp.json()["files"]}
+    assert ".agents/skills/react-expert/SKILL.md" in inline_paths
+    assert ".agents/skills/react-expert/references/server-components.md" in inline_paths
+    assert ".agents/skills/ba-template-2/SKILL.md" not in inline_paths
+
 
 
 
