@@ -2,7 +2,7 @@ api_version: harnessforge/v1
 kind: AgentArchitecture
 metadata:
   id: planner-coder-verifier
-  name: Planner -> Coder <-> Verifier (Actor-Critic Loop)
+  name: SDLC
   version: 1.0.0
   description: 'Hierarchical 3-subagent architecture enforcing separation of concerns: Root Orchestrator
     delegates discovery to Planner, implementation to Coder, and independent test/diff verification to
