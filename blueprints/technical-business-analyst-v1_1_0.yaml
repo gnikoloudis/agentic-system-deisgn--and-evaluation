@@ -202,6 +202,7 @@ skills:
     \ (Edge/Boundary): **Given** <boundary>, **When** <action>, **Then** <expected outcome>.\n  - `TC-xxx-03`\
     \ (Negative/Error): **Given** <invalid input>, **When** <action>, **Then** <error response>.\n- **INVEST\
     \ Audit**: Independent | Negotiable | Valuable | Estimable | Small | Testable\n"
+  source_dir: null
   trigger_command: /wikipedia-user-story
 - id: delivery-rtm-pack
   name: BA Delivery Pack & Requirements Traceability Matrix (RTM)
@@ -219,7 +220,9 @@ skills:
     4. Full Requirements Traceability Matrix (RTM) linking `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `TC-xxx`.
 
     '
+  source_dir: null
   trigger_command: /delivery-rtm-pack
+commands: []
 hooks:
 - id: enforce_ba_delegation
   event: PreToolUse
@@ -301,8 +304,8 @@ topology:
 visual_layout:
   nodes:
     root_orchestrator:
-      x: -62.0
-      y: -159.0
+      x: -64.0
+      y: -269.0
     requirements_elicitor:
       x: -78.0
       y: 167.0
