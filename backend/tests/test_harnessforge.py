@@ -366,6 +366,31 @@ def test_folder_backed_skill_bundles_references_and_scripts(client: TestClient, 
     assert ".agents/skills/ba-template-2/SKILL.md" not in inline_paths
 
 
+def test_custom_user_commands_compile_across_all_harnesses():
+    """Verify blueprint.commands compile to native slash commands/skills in OpenCode, Claude Code, and Antigravity."""
+    from app.schemas.blueprint import CommandSpec
+
+    found = get_blueprint("planner-coder-verifier")
+    assert found is not None
+    bp = found[0].model_copy(deep=True)
+    bp.commands.append(
+        CommandSpec(
+            id="build-ui-epic",
+            description="Build the next UI epic from external specs",
+            prompt="Read external UI specs and implement EPIC-UI-01 via planner -> coder -> verifier.",
+            agent="root_orchestrator",
+        )
+    )
+
+    oc = compile_architecture(bp, harness="opencode", run_id="cmd-test")
+    cc = compile_architecture(bp, harness="claude_code", run_id="cmd-test")
+    ag = compile_architecture(bp, harness="antigravity", run_id="cmd-test")
+
+    assert ".opencode/command/build-ui-epic.md" in {f.relative_path for f in oc.files}
+    assert ".claude/commands/build-ui-epic.md" in {f.relative_path for f in cc.files}
+    assert ".agents/skills/build-ui-epic/SKILL.md" in {f.relative_path for f in ag.files}
+
+
 
 
 

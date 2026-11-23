@@ -12,6 +12,7 @@ Compiles AgentArchitecture into:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from typing import Any, Dict, List
 
@@ -146,6 +147,22 @@ class OpenCodeAdapter(HarnessAdapter):
                     relative_path=f".opencode/command/{slug}.md",
                     content=cmd_md,
                     description=f"OpenCode custom command `/{slug}`",
+                )
+            )
+
+        # 3b. Explicit Custom User Commands -> .opencode/command/<cmd.id>.md
+        for cmd in blueprint.commands:
+            c_slug = re.sub(r"[^a-z0-9_-]+", "-", cmd.id.strip().lstrip("/").lower()).strip("-") or "custom-cmd"
+            fm_lines = ["---", f"description: {json.dumps(cmd.description)}"]
+            if cmd.agent and cmd.agent.strip():
+                fm_lines.append(f"agent: {cmd.agent.strip()}")
+            fm_lines.append("---")
+            cmd_md = "\n".join(fm_lines) + "\n\n" + cmd.prompt.strip() + "\n"
+            files.append(
+                CompiledFile(
+                    relative_path=f".opencode/command/{c_slug}.md",
+                    content=cmd_md,
+                    description=f"OpenCode user-defined command `/{c_slug}`",
                 )
             )
 

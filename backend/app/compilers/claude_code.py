@@ -103,6 +103,25 @@ class ClaudeCodeAdapter(HarnessAdapter):
                 )
             )
 
+        # 3b. Explicit Custom User Commands -> .claude/commands/<cmd.id>.md
+        import re as _re
+
+        for cmd in blueprint.commands:
+            c_slug = _re.sub(r"[^a-z0-9_-]+", "-", cmd.id.strip().lstrip("/").lower()).strip("-") or "custom-cmd"
+            cmd_content = (
+                "---\n"
+                f"description: {json.dumps(cmd.description)}\n"
+                "---\n\n"
+                f"{cmd.prompt.strip()}\n"
+            )
+            files.append(
+                CompiledFile(
+                    relative_path=f".claude/commands/{c_slug}.md",
+                    content=cmd_content,
+                    description=f"Claude Code user-defined slash command `/{c_slug}`",
+                )
+            )
+
         # 4. Hooks & Permissions -> .claude/settings.local.json
         settings_payload = {
             "permissions": {

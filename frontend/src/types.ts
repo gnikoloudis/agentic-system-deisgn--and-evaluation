@@ -67,6 +67,13 @@ export interface SkillSpec {
   trigger_command?: string | null;
 }
 
+export interface CommandSpec {
+  id: string;
+  description: string;
+  prompt: string;
+  agent?: string | null;
+}
+
 export interface HookSpec {
   id: string;
   event: "PreToolUse" | "PostToolUse" | "SubagentStop" | "Stop" | "UserPromptSubmit";
@@ -123,6 +130,7 @@ export interface AgentArchitecture {
   orchestrator: OrchestratorSpec;
   subagents: SubagentSpec[];
   skills: SkillSpec[];
+  commands?: CommandSpec[];
   hooks: HookSpec[];
   mcp_servers: MCPServerSpec[];
   topology: TopologySpec;

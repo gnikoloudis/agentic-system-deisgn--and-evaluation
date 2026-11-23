@@ -464,6 +464,14 @@ class HarnessAdapter(ABC):
                 lines.append(f"- **`{sk.id}`**{cmd}: {sk.description}")
             lines.append("")
 
+        if bp.commands:
+            lines.append("## 5b. Custom Executable Slash Commands")
+            for c in bp.commands:
+                slug = c.id.strip().lstrip("/")
+                agent_str = f" *(Agent: `{c.agent}`)*" if c.agent else ""
+                lines.append(f"- **`/{slug}`**{agent_str}: {c.description}")
+            lines.append("")
+
         if bp.hooks:
             lines.append("## 6. Active Runtime Guardrail Hooks")
             for hk in bp.hooks:

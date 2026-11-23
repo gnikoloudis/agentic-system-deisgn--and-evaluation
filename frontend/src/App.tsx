@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -55,8 +55,18 @@ export default function App() {
   const [rawYaml, setRawYaml] = useState<string>("");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>("root_orchestrator");
   const [studioRightPanel, setStudioRightPanel] = useState<
-    "inspector" | "yaml" | "compiled" | "models"
+    "inspector" | "commands" | "yaml" | "compiled" | "models"
   >("inspector");
+  const [saveStatus, setSaveStatus] = useState<"saved" | "saving" | "unsaved">("saved");
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const compilePreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Custom Commands form state
+  const [newCmdId, setNewCmdId] = useState<string>("");
+  const [newCmdDesc, setNewCmdDesc] = useState<string>("");
+  const [newCmdPrompt, setNewCmdPrompt] = useState<string>("");
+  const [newCmdAgent, setNewCmdAgent] = useState<string>("");
+  const [editingCmdId, setEditingCmdId] = useState<string | null>(null);
 
   const [previewHarness, setPreviewHarness] = useState<HarnessType>("claude_code");
   const [harnessModels, setHarnessModels] = useState<HarnessModelsConfig | null>(null);
@@ -129,40 +139,50 @@ export default function App() {
       setHarnessStatus(hStatus);
       setHarnessModels(hModels);
 
-      if (bps.length > 0 && !selectedBlueprint) {
+      if (bps.length > 0) {
         const defaultBp = bps.find((b) => b.metadata.id === "planner-coder-verifier") || bps[0];
         const full = await api.getBlueprint(defaultBp.metadata.id);
         setSelectedBlueprint(full.blueprint);
         setRawYaml(full.raw_yaml);
       }
-      if (tks.length > 0 && !selectedTask) {
+      if (tks.length > 0) {
         const fullTask = await api.getTask(tks[0].id);
         setSelectedTask(fullTask.task);
         setTaskYaml(fullTask.raw_yaml);
       }
-      if (rns.length > 0 && !activeRun) {
+      if (rns.length > 0) {
         setActiveRun(rns[0]);
         setCompareIds(rns.slice(0, 2).map((r) => r.id));
       }
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : "Failed to connect to backend", "err");
     }
-  }, [selectedBlueprint, selectedTask, activeRun]);
+  }, []);
 
   useEffect(() => {
     loadInitialData();
   }, [loadInitialData]);
 
-  // Refresh compiled preview whenever selected blueprint (including live edits) or target harness changes
+  // Debounced live compiled preview whenever selected blueprint or target harness changes
   useEffect(() => {
     if (!selectedBlueprint) return;
-    api
-      .compilePreviewInline(selectedBlueprint, previewHarness)
-      .then((res) => {
-        setCompiledResult(res);
-        setSelectedCompiledFileIdx((prev) => (prev < res.files.length ? prev : 0));
-      })
-      .catch(() => { });
+    if (compilePreviewTimerRef.current) {
+      clearTimeout(compilePreviewTimerRef.current);
+    }
+    compilePreviewTimerRef.current = setTimeout(() => {
+      api
+        .compilePreviewInline(selectedBlueprint, previewHarness)
+        .then((res) => {
+          setCompiledResult(res);
+          setSelectedCompiledFileIdx((prev) => (prev < res.files.length ? prev : 0));
+        })
+        .catch(() => { });
+    }, 300);
+    return () => {
+      if (compilePreviewTimerRef.current) {
+        clearTimeout(compilePreviewTimerRef.current);
+      }
+    };
   }, [selectedBlueprint, previewHarness]);
 
   // Load telemetry events when activeRun changes
@@ -178,40 +198,60 @@ export default function App() {
 
   const handleSelectBlueprint = async (id: string) => {
     try {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
       const res = await api.getBlueprint(id);
       setSelectedBlueprint(res.blueprint);
       setRawYaml(res.raw_yaml);
       setSelectedNodeId(res.blueprint.orchestrator.id);
+      setSaveStatus("saved");
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : "Error loading blueprint", "err");
     }
   };
 
-  const handleCanvasBlueprintChange = async (updated: AgentArchitecture) => {
+  const handleCanvasBlueprintChange = (updated: AgentArchitecture) => {
     setSelectedBlueprint(updated);
     setBlueprints((prev) =>
       prev.map((b) => (b.metadata.id === updated.metadata.id ? updated : b))
     );
-    try {
-      const synced = await api.convertYaml({ blueprint: updated });
-      setRawYaml(synced.raw_yaml);
-    } catch {
-      // keep local state if intermediate edit
+    setSaveStatus("saving");
+
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
     }
+    autoSaveTimerRef.current = setTimeout(async () => {
+      try {
+        const saved = await api.saveBlueprint({ blueprint: updated });
+        setRawYaml(saved.raw_yaml);
+        setSaveStatus("saved");
+      } catch {
+        setSaveStatus("unsaved");
+      }
+    }, 700);
   };
 
   const handleSaveBlueprint = async (useRawYaml = false) => {
     try {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      setSaveStatus("saving");
       const payload = useRawYaml ? { raw_yaml: rawYaml } : { blueprint: selectedBlueprint! };
       const saved = await api.saveBlueprint(payload);
       setSelectedBlueprint(saved.blueprint);
       setRawYaml(saved.raw_yaml);
       const bps = await api.listBlueprints();
       setBlueprints(bps);
-      const comp = await api.compilePreview(saved.blueprint.metadata.id, previewHarness);
+      const comp = await api.compilePreviewInline(saved.blueprint, previewHarness);
       setCompiledResult(comp);
+      setSaveStatus("saved");
       notify(`Saved blueprint '${saved.blueprint.metadata.name}' (v${saved.blueprint.metadata.version})`);
     } catch (err: unknown) {
+      setSaveStatus("unsaved");
       notify(err instanceof Error ? err.message : "Failed to save blueprint", "err");
     }
   };
@@ -899,8 +939,19 @@ export default function App() {
                     onClick={() => handleSaveBlueprint(false)}
                     className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white text-[11px] font-semibold cursor-pointer shrink-0"
                   >
-                    <Save className="w-3 h-3" /> Save Name
+                    <Save className="w-3 h-3" /> Save
                   </button>
+                  <span
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded shrink-0 ${
+                      saveStatus === "saved"
+                        ? "bg-emerald-950/70 text-emerald-300 border border-emerald-800/60"
+                        : saveStatus === "saving"
+                        ? "bg-amber-950/70 text-amber-300 border border-amber-800/60"
+                        : "bg-rose-950/70 text-rose-300 border border-rose-800/60"
+                    }`}
+                  >
+                    {saveStatus === "saved" ? "Auto-Saved ✓" : saveStatus === "saving" ? "Saving..." : "Unsaved"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2 text-[11px] text-slate-400 shrink-0">
                   <span className="inline-block w-2.5 h-2.5 rounded-full bg-indigo-500" /> Orchestrator
@@ -922,14 +973,15 @@ export default function App() {
               </div>
             </div>
 
-            {/* Right Panel: Node Inspector / Bi-Directional YAML / Compiled Harness Files / Harness Models */}
-            <aside className="w-[460px] border-l border-slate-800 bg-slate-900/70 flex flex-col shrink-0">
+            {/* Right Panel: Node Inspector / Commands / Harness Models / YAML / Compiled Files */}
+            <aside className="w-[480px] border-l border-slate-800 bg-slate-900/70 flex flex-col shrink-0">
               <div className="flex border-b border-slate-800 bg-slate-950/60">
                 {[
-                  { id: "inspector", label: "Node Inspector", icon: Bot },
-                  { id: "models", label: "Harness Models", icon: Cpu },
-                  { id: "yaml", label: "YAML (2-Way)", icon: Code2 },
-                  { id: "compiled", label: "Compiled Files", icon: Terminal },
+                  { id: "inspector", label: "Inspector", icon: Bot },
+                  { id: "commands", label: `Commands (${(selectedBlueprint.commands || []).length})`, icon: Sparkles },
+                  { id: "models", label: "Models", icon: Cpu },
+                  { id: "yaml", label: "YAML", icon: Code2 },
+                  { id: "compiled", label: "Compiled", icon: Terminal },
                 ].map((p) => {
                   const Icon = p.icon;
                   return (
@@ -1651,6 +1703,270 @@ export default function App() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Panel 1.25: Custom & Executable Slash Commands Manager */}
+              {studioRightPanel === "commands" && (
+                <div className="flex-1 flex flex-col p-4 overflow-y-auto space-y-4 text-xs">
+                  <div>
+                    <div className="font-bold text-white text-sm">
+                      Executable Custom Commands ({(selectedBlueprint.commands || []).length + selectedBlueprint.skills.length + 3})
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      Configure reusable slash commands that compile into{" "}
+                      <code className="text-cyan-300">.opencode/command/</code>,{" "}
+                      <code className="text-cyan-300">.claude/commands/</code>, and{" "}
+                      <code className="text-cyan-300">.agents/skills/</code>.
+                    </div>
+                  </div>
+
+                  {/* Add / Edit Custom Command Form */}
+                  <div className="p-3 rounded-xl bg-slate-950 border border-indigo-800/60 space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-indigo-300">
+                        {editingCmdId ? `Edit Custom Command: /${editingCmdId}` : "+ Add Custom Command"}
+                      </div>
+                      {editingCmdId && (
+                        <button
+                          onClick={() => {
+                            setEditingCmdId(null);
+                            setNewCmdId("");
+                            setNewCmdDesc("");
+                            setNewCmdPrompt("");
+                            setNewCmdAgent("");
+                          }}
+                          className="text-[10px] text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          Cancel Edit
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">Command Slug</label>
+                        <input
+                          placeholder="e.g. build-ui-epic"
+                          value={newCmdId}
+                          onChange={(e) => setNewCmdId(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px] text-emerald-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">Target Agent (Optional)</label>
+                        <select
+                          value={newCmdAgent}
+                          onChange={(e) => setNewCmdAgent(e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px] text-slate-200"
+                        >
+                          <option value="">Default (Orchestrator)</option>
+                          <option value={selectedBlueprint.orchestrator.id}>
+                            {selectedBlueprint.orchestrator.name} ({selectedBlueprint.orchestrator.id})
+                          </option>
+                          {selectedBlueprint.subagents.map((sa) => (
+                            <option key={sa.id} value={sa.id}>
+                              {sa.name} ({sa.id})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Short Description</label>
+                      <input
+                        placeholder="e.g. Implement the next UI Epic from external specs using planner -> coder -> verifier"
+                        value={newCmdDesc}
+                        onChange={(e) => setNewCmdDesc(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px]"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-0.5">
+                        Command Prompt / Execution Instructions
+                      </label>
+                      <textarea
+                        rows={4}
+                        placeholder="Write the exact instructions the agent should execute when the user invokes this command..."
+                        value={newCmdPrompt}
+                        onChange={(e) => setNewCmdPrompt(e.target.value)}
+                        className="w-full bg-slate-900 border border-slate-800 rounded-lg p-2 font-mono text-[11px] leading-relaxed"
+                      />
+                    </div>
+                    <button
+                      onClick={() => {
+                        const slug = sanitizeSlug(newCmdId.replace(/^\/+/, ""));
+                        if (!slug || !newCmdPrompt.trim()) {
+                          notify("Please enter both a Command Slug and Prompt instructions.", "err");
+                          return;
+                        }
+                        const existing = selectedBlueprint.commands || [];
+                        const nextCmd = {
+                          id: slug,
+                          description: newCmdDesc.trim() || `Run custom command /${slug}`,
+                          prompt: newCmdPrompt.trim(),
+                          agent: newCmdAgent.trim() || null,
+                        };
+                        const filtered = existing.filter(
+                          (c) => c.id !== slug && c.id !== editingCmdId
+                        );
+                        handleCanvasBlueprintChange({
+                          ...selectedBlueprint,
+                          commands: [...filtered, nextCmd],
+                        });
+                        setEditingCmdId(null);
+                        setNewCmdId("");
+                        setNewCmdDesc("");
+                        setNewCmdPrompt("");
+                        setNewCmdAgent("");
+                        notify(`Saved custom command '/${slug}' (auto-saving to blueprint)!`);
+                      }}
+                      className="w-full py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs cursor-pointer"
+                    >
+                      {editingCmdId ? "Update Custom Command" : "+ Add Custom Command"}
+                    </button>
+                  </div>
+
+                  {/* List of Custom Commands */}
+                  <div className="space-y-2">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-emerald-400">
+                      Your Custom Commands ({(selectedBlueprint.commands || []).length})
+                    </div>
+                    {(selectedBlueprint.commands || []).length === 0 ? (
+                      <div className="p-3 rounded-xl bg-slate-950/60 border border-slate-800 text-slate-400 text-[11px]">
+                        No custom commands yet. Add one above (e.g. <code className="text-emerald-300">/build-ui-epic</code> or <code className="text-emerald-300">/review-pr</code>) and it will automatically compile for {HARNESS_LABELS[previewHarness].name}.
+                      </div>
+                    ) : (
+                      (selectedBlueprint.commands || []).map((cmd) => {
+                        const invokeText =
+                          previewHarness === "antigravity"
+                            ? `Run the ${cmd.id} skill`
+                            : `/${cmd.id}`;
+                        return (
+                          <div
+                            key={cmd.id}
+                            className="p-2.5 rounded-xl bg-slate-950 border border-emerald-800/50 space-y-1.5"
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-1.5 min-w-0">
+                                <span className="font-mono font-bold text-emerald-300">/{cmd.id}</span>
+                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60">
+                                  Custom
+                                </span>
+                                {cmd.agent && (
+                                  <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-slate-800 text-cyan-300">
+                                    @{cmd.agent}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(invokeText);
+                                    notify(`Copied '${invokeText}' to clipboard!`);
+                                  }}
+                                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] cursor-pointer"
+                                  title="Copy command invocation"
+                                >
+                                  Copy
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    setEditingCmdId(cmd.id);
+                                    setNewCmdId(cmd.id);
+                                    setNewCmdDesc(cmd.description);
+                                    setNewCmdPrompt(cmd.prompt);
+                                    setNewCmdAgent(cmd.agent || "");
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-indigo-300 cursor-pointer"
+                                  title="Edit command"
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    handleCanvasBlueprintChange({
+                                      ...selectedBlueprint,
+                                      commands: (selectedBlueprint.commands || []).filter(
+                                        (c) => c.id !== cmd.id
+                                      ),
+                                    });
+                                    notify(`Removed custom command '/${cmd.id}'`);
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-rose-400 cursor-pointer"
+                                  title="Delete command"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                            <div className="text-[11px] text-slate-300">{cmd.description}</div>
+                            <div className="text-[10px] text-slate-500 font-mono">
+                              Run in {HARNESS_LABELS[previewHarness].name}: <span className="text-cyan-300">{invokeText}</span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+
+                  {/* Skill & Built-in Executable Commands Reference */}
+                  <div className="space-y-2 pt-2 border-t border-slate-800">
+                    <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                      Skill &amp; Built-In Executable Commands
+                    </div>
+                    {[
+                      ...selectedBlueprint.skills.map((sk) => ({
+                        id: sk.id,
+                        desc: sk.description,
+                        badge: "Skill",
+                      })),
+                      {
+                        id: "verify-setup",
+                        desc: "Verify installed agents, skills, and external documentation readability",
+                        badge: "Built-in",
+                      },
+                      {
+                        id: "generate-tba-pack",
+                        desc: "Run the full TBA workflow to produce Workflows and Epics/User Stories",
+                        badge: "Built-in",
+                      },
+                      {
+                        id: "evaluate-project",
+                        desc: "Verify deliverables on disk and prepare for HarnessForge evaluation",
+                        badge: "Built-in",
+                      },
+                    ].map((item) => {
+                      const invokeText =
+                        previewHarness === "antigravity"
+                          ? `Run the ${item.id} skill`
+                          : `/${item.id}`;
+                      return (
+                        <div
+                          key={`${item.badge}-${item.id}`}
+                          className="p-2 rounded-lg bg-slate-950/70 border border-slate-800 flex items-center justify-between gap-2"
+                        >
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-mono text-cyan-300 font-semibold">/{item.id}</span>
+                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 uppercase">
+                                {item.badge}
+                              </span>
+                            </div>
+                            <div className="text-[10px] text-slate-400 truncate">{item.desc}</div>
+                          </div>
+                          <button
+                            onClick={() => {
+                              navigator.clipboard.writeText(invokeText);
+                              notify(`Copied '${invokeText}' to clipboard!`);
+                            }}
+                            className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] cursor-pointer shrink-0"
+                          >
+                            Copy
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

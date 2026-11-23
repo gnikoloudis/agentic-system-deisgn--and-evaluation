@@ -242,6 +242,7 @@ def api_export_to_directory(architecture_id: str, req: ExportToDirectoryRequest)
             "/verify-setup",
             "/generate-tba-pack",
             "/evaluate-project",
+            *[f"/{cmd.id.lstrip('/')}" for cmd in bp.commands],
             *[f"/{sk.id}" for sk in bp.skills],
         ],
         "files_written": [f.relative_path for f in compilation.files],

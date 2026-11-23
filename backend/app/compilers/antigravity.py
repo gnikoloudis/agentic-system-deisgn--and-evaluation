@@ -139,6 +139,35 @@ class AntigravityAdapter(HarnessAdapter):
             bundle_legacy, _ = load_skill_bundle_files(sk, f".agent/skills/{slug}")
             files.extend(bundle_legacy)
 
+        # 3b. Explicit Custom User Commands -> .agents/skills/<cmd.id>/SKILL.md
+        import re as _re
+
+        for cmd in blueprint.commands:
+            c_slug = _re.sub(r"[^a-z0-9_-]+", "-", cmd.id.strip().lstrip("/").lower()).strip("-") or "custom-cmd"
+            agent_note = f"\n> Target Agent: `{cmd.agent}`\n" if cmd.agent else ""
+            cmd_skill_md = (
+                "---\n"
+                f"name: {c_slug}\n"
+                f"description: {json.dumps(cmd.description)}\n"
+                "---\n\n"
+                f"# Command: /{c_slug}\n{agent_note}\n"
+                f"{cmd.prompt.strip()}\n"
+            )
+            files.append(
+                CompiledFile(
+                    relative_path=f".agents/skills/{c_slug}/SKILL.md",
+                    content=cmd_skill_md,
+                    description=f"Antigravity user-defined command skill `/{c_slug}`",
+                )
+            )
+            files.append(
+                CompiledFile(
+                    relative_path=f".agent/skills/{c_slug}/SKILL.md",
+                    content=cmd_skill_md,
+                    description=f"Antigravity user-defined command skill `/{c_slug}` (legacy path)",
+                )
+            )
+
         builtin_skills: List[Dict[str, str]] = [
             {
                 "id": "verify-setup",

@@ -96,6 +96,16 @@ class SkillSpec(BaseModel):
     )
 
 
+class CommandSpec(BaseModel):
+    id: str = Field(..., description="Slash command slug without leading slash (e.g. 'build-ui-epic')")
+    description: str = Field(..., description="Short description displayed in the command list")
+    prompt: str = Field(..., description="Prompt or instructions executed when the user invokes /<id>")
+    agent: Optional[str] = Field(
+        default=None,
+        description="Optional target agent ID (e.g. 'root_orchestrator' or a subagent ID)",
+    )
+
+
 class HookSpec(BaseModel):
     id: str = Field(..., description="Unique hook rule ID")
     event: Literal["PreToolUse", "PostToolUse", "SubagentStop", "Stop", "UserPromptSubmit"] = Field(
@@ -185,6 +195,7 @@ class AgentArchitecture(BaseModel):
     orchestrator: OrchestratorSpec = Field(default_factory=OrchestratorSpec)
     subagents: List[SubagentSpec] = Field(default_factory=list)
     skills: List[SkillSpec] = Field(default_factory=list)
+    commands: List[CommandSpec] = Field(default_factory=list)
     hooks: List[HookSpec] = Field(default_factory=list)
     mcp_servers: List[MCPServerSpec] = Field(default_factory=list)
     topology: TopologySpec = Field(default_factory=TopologySpec)
