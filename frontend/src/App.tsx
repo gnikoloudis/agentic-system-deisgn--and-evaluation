@@ -106,6 +106,9 @@ export default function App() {
   const [newVerifierPattern, setNewVerifierPattern] = useState<string>("");
   const [newVerifierWeight, setNewVerifierWeight] = useState<number>(1.5);
   const [newVerifierRequired, setNewVerifierRequired] = useState<boolean>(true);
+  const [newVerifierMaxLines, setNewVerifierMaxLines] = useState<number>(150);
+  const [newVerifierTimeout, setNewVerifierTimeout] = useState<number>(60);
+  const [editingVerifierId, setEditingVerifierId] = useState<string | null>(null);
 
   // Runner & Telemetry state
   const [runHarness, setRunHarness] = useState<HarnessType>("claude_code");
@@ -3259,10 +3262,31 @@ export default function App() {
                       ))}
                     </div>
 
-                    {/* Custom Verifier Builder Form */}
-                    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
-                      <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">
-                        + Add Custom Verifier Check
+                    {/* Custom Verifier CRUD Form (Create & Update) */}
+                    <div className={`p-3 rounded-xl bg-slate-950 border space-y-2 text-xs ${editingVerifierId ? "border-cyan-500/70" : "border-slate-800"}`}>
+                      <div className="flex items-center justify-between">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">
+                          {editingVerifierId ? `Edit Verifier (${editingVerifierId})` : "+ Add Custom Verifier Check"}
+                        </div>
+                        {editingVerifierId && (
+                          <button
+                            onClick={() => {
+                              setEditingVerifierId(null);
+                              setNewVerifierName("");
+                              setNewVerifierType("command_exit_code");
+                              setNewVerifierCommand("");
+                              setNewVerifierTargetPath("");
+                              setNewVerifierPattern("");
+                              setNewVerifierWeight(1.5);
+                              setNewVerifierRequired(true);
+                              setNewVerifierMaxLines(150);
+                              setNewVerifierTimeout(60);
+                            }}
+                            className="text-[10px] text-slate-400 hover:text-white cursor-pointer"
+                          >
+                            Cancel Edit
+                          </button>
+                        )}
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <input
@@ -3313,8 +3337,18 @@ export default function App() {
                             className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px]"
                           />
                         )}
+                        {newVerifierType === "git_diff_max_lines" && (
+                          <input
+                            type="number"
+                            min={10}
+                            placeholder="Max changed lines (e.g. 150)"
+                            value={newVerifierMaxLines}
+                            onChange={(e) => setNewVerifierMaxLines(Number(e.target.value) || 150)}
+                            className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px]"
+                          />
+                        )}
                       </div>
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-3 text-[11px] text-slate-300">
                           <label className="flex items-center gap-1">
                             Weight:
@@ -3325,6 +3359,17 @@ export default function App() {
                               max="5"
                               value={newVerifierWeight}
                               onChange={(e) => setNewVerifierWeight(Number(e.target.value) || 1)}
+                              className="w-14 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 font-mono"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1">
+                            Timeout(s):
+                            <input
+                              type="number"
+                              min={5}
+                              max={300}
+                              value={newVerifierTimeout}
+                              onChange={(e) => setNewVerifierTimeout(Number(e.target.value) || 60)}
                               className="w-14 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 font-mono"
                             />
                           </label>
@@ -3339,36 +3384,53 @@ export default function App() {
                         </div>
                         <button
                           onClick={async () => {
-                            const checkId = `chk_${Date.now().toString().slice(-4)}`;
-                            const newCheck = {
+                            const checkId = editingVerifierId || `chk_${Date.now().toString().slice(-4)}`;
+                            const builtCheck = {
                               id: checkId,
                               name: newVerifierName.trim() || `${newVerifierType} check`,
                               type: newVerifierType,
-                              command: newVerifierCommand.trim() || null,
-                              target_path: newVerifierTargetPath.trim() || null,
-                              pattern: newVerifierPattern.trim() || null,
-                              max_lines: newVerifierType === "git_diff_max_lines" ? 150 : null,
+                              command: ["command_exit_code", "pytest_pass"].includes(newVerifierType)
+                                ? newVerifierCommand.trim() || null
+                                : null,
+                              target_path: ["file_exists", "file_contains_regex", "file_not_contains_regex", "markdown_sections_present", "user_story_invest_check", "mermaid_diagram_valid"].includes(newVerifierType)
+                                ? newVerifierTargetPath.trim() || null
+                                : null,
+                              pattern: ["file_contains_regex", "file_not_contains_regex", "markdown_sections_present", "git_diff_contains"].includes(newVerifierType)
+                                ? newVerifierPattern.trim() || null
+                                : null,
+                              max_lines: newVerifierType === "git_diff_max_lines" ? newVerifierMaxLines : null,
                               weight: newVerifierWeight,
                               required: newVerifierRequired,
-                              timeout_seconds: 60,
+                              timeout_seconds: newVerifierTimeout,
                             };
+                            const nextVerifiers = editingVerifierId
+                              ? selectedTask.verifiers.map((chk) =>
+                                  chk.id === editingVerifierId ? builtCheck : chk
+                                )
+                              : [...selectedTask.verifiers, builtCheck];
                             const updatedTask: TaskSpec = {
                               ...selectedTask,
-                              verifiers: [...selectedTask.verifiers, newCheck],
+                              verifiers: nextVerifiers,
                             };
                             const saved = await api.saveTask({ task: updatedTask });
                             setSelectedTask(saved.task);
                             setTaskYaml(saved.raw_yaml);
                             setTasks(await api.listTasks());
+                            const wasEdit = Boolean(editingVerifierId);
+                            setEditingVerifierId(null);
                             setNewVerifierName("");
                             setNewVerifierCommand("");
                             setNewVerifierTargetPath("");
                             setNewVerifierPattern("");
-                            notify(`Added custom verifier '${newCheck.name}'`);
+                            setNewVerifierWeight(1.5);
+                            setNewVerifierRequired(true);
+                            setNewVerifierMaxLines(150);
+                            setNewVerifierTimeout(60);
+                            notify(wasEdit ? `Updated verifier '${builtCheck.name}'` : `Added custom verifier '${builtCheck.name}'`);
                           }}
                           className="px-3 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-semibold cursor-pointer"
                         >
-                          + Add Verifier
+                          {editingVerifierId ? "Update Verifier" : "+ Add Verifier"}
                         </button>
                       </div>
                     </div>
@@ -3378,7 +3440,9 @@ export default function App() {
                       {selectedTask.verifiers.map((v) => (
                         <div
                           key={v.id}
-                          className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2 text-xs"
+                          className={`p-2.5 rounded-lg bg-slate-950 border flex items-center justify-between gap-2 text-xs ${
+                            editingVerifierId === v.id ? "border-cyan-500" : "border-slate-800"
+                          }`}
                         >
                           <div className="min-w-0">
                             <div className="font-semibold text-white flex items-center gap-1.5">
@@ -3392,13 +3456,31 @@ export default function App() {
                             <div className="font-mono text-[11px] text-slate-400 truncate">
                               type: {v.type}{" "}
                               {v.target_path ? `| file: ${v.target_path} ` : ""}
-                              {v.command ? `| cmd: ${v.command}` : v.pattern ? `| pattern: ${v.pattern}` : ""}
+                              {v.command ? `| cmd: ${v.command}` : v.pattern ? `| pattern: ${v.pattern}` : v.max_lines ? `| max_lines: ${v.max_lines}` : ""}
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0">
                             <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/40">
                               {v.weight}x
                             </span>
+                            <button
+                              onClick={() => {
+                                setEditingVerifierId(v.id);
+                                setNewVerifierName(v.name);
+                                setNewVerifierType(v.type);
+                                setNewVerifierCommand(v.command || "");
+                                setNewVerifierTargetPath(v.target_path || "");
+                                setNewVerifierPattern(v.pattern || "");
+                                setNewVerifierMaxLines(v.max_lines || 150);
+                                setNewVerifierWeight(v.weight);
+                                setNewVerifierRequired(v.required);
+                                setNewVerifierTimeout(v.timeout_seconds || 60);
+                              }}
+                              className="p-1 text-slate-400 hover:text-cyan-300 cursor-pointer"
+                              title="Edit verifier"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
                             <button
                               onClick={async () => {
                                 const updatedTask: TaskSpec = {
@@ -3409,9 +3491,12 @@ export default function App() {
                                 setSelectedTask(saved.task);
                                 setTaskYaml(saved.raw_yaml);
                                 setTasks(await api.listTasks());
+                                if (editingVerifierId === v.id) {
+                                  setEditingVerifierId(null);
+                                }
                                 notify(`Removed verifier '${v.name}'`);
                               }}
-                              className="text-slate-500 hover:text-rose-400 cursor-pointer"
+                              className="p-1 text-slate-500 hover:text-rose-400 cursor-pointer"
                               title="Remove verifier"
                             >
                               <Trash2 className="w-3.5 h-3.5" />
