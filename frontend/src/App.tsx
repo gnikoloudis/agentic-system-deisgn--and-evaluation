@@ -2528,7 +2528,8 @@ export default function App() {
                         skillIds.has(e.source)
                           ? { ...e, source: e.target, target: e.source, required: false, max_loops: 1 }
                           : e
-                      );
+                      )
+                      .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target));
 
                     const commitEdges = (
                       nextWorkflow: typeof workflowEdges,
@@ -2538,12 +2539,14 @@ export default function App() {
                         ...ed,
                         order: idx + 1,
                       }));
-                      const renumberedSkills = nextSkills.map((ed, idx) => ({
-                        ...ed,
-                        order: renumberedWorkflow.length + idx + 1,
-                        required: false,
-                        max_loops: 1,
-                      }));
+                      const renumberedSkills = [...nextSkills]
+                        .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
+                        .map((ed, idx) => ({
+                          ...ed,
+                          order: renumberedWorkflow.length + idx + 1,
+                          required: false,
+                          max_loops: 1,
+                        }));
                       handleCanvasBlueprintChange({
                         ...selectedBlueprint,
                         topology: {
@@ -2693,45 +2696,64 @@ export default function App() {
                               No agent-specific skill bindings. Drag between any Agent and Skill node on the canvas to assign a skill.
                             </div>
                           ) : (
-                            <div className="space-y-1.5">
-                              {skillEdges.map((edge) => (
-                                <div
-                                  key={edge.id}
-                                  className="p-2 rounded-lg bg-slate-950 border border-emerald-900/50 flex items-center justify-between gap-2"
-                                >
-                                  <div className="min-w-0 flex-1">
-                                    <div className="flex items-center gap-1.5 font-mono text-[11px] text-emerald-300">
-                                      <span className="text-cyan-300">{edge.source}</span>
-                                      <ArrowRight className="w-3 h-3 text-emerald-500 shrink-0" />
-                                      <span className="truncate">/{edge.target}</span>
-                                    </div>
-                                    <input
-                                      value={edge.condition}
-                                      onChange={(e) =>
-                                        commitEdges(
-                                          workflowEdges,
-                                          skillEdges.map((ed) =>
-                                            ed.id === edge.id
-                                              ? { ...ed, condition: e.target.value }
-                                              : ed
-                                          )
-                                        )
-                                      }
-                                      className="mt-0.5 w-full bg-transparent text-[10px] text-slate-400 focus:text-white outline-none"
-                                    />
+                            <div className="space-y-2.5">
+                              {Array.from(
+                                skillEdges.reduce((groups, edge) => {
+                                  const list = groups.get(edge.source) || [];
+                                  list.push(edge);
+                                  groups.set(edge.source, list);
+                                  return groups;
+                                }, new Map<string, typeof skillEdges>())
+                              ).map(([agentId, agentSkillEdges]) => (
+                                <div key={agentId} className="space-y-1">
+                                  <div className="flex items-center justify-between px-1">
+                                    <span className="font-mono text-[10px] font-bold uppercase tracking-wider text-cyan-300">
+                                      @{agentId}
+                                    </span>
+                                    <span className="text-[10px] text-slate-500">
+                                      {agentSkillEdges.length} skill{agentSkillEdges.length === 1 ? "" : "s"}
+                                    </span>
                                   </div>
-                                  <button
-                                    onClick={() =>
-                                      commitEdges(
-                                        workflowEdges,
-                                        skillEdges.filter((ed) => ed.id !== edge.id)
-                                      )
-                                    }
-                                    className="text-slate-500 hover:text-rose-400 cursor-pointer"
-                                    title="Unbind skill from agent"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                  {agentSkillEdges.map((edge) => (
+                                    <div
+                                      key={edge.id}
+                                      className="p-2 rounded-lg bg-slate-950 border border-emerald-900/50 flex items-center justify-between gap-2"
+                                    >
+                                      <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-1.5 font-mono text-[11px] text-emerald-300">
+                                          <span className="text-cyan-300">{edge.source}</span>
+                                          <ArrowRight className="w-3 h-3 text-emerald-500 shrink-0" />
+                                          <span className="truncate">/{edge.target}</span>
+                                        </div>
+                                        <input
+                                          value={edge.condition}
+                                          onChange={(e) =>
+                                            commitEdges(
+                                              workflowEdges,
+                                              skillEdges.map((ed) =>
+                                                ed.id === edge.id
+                                                  ? { ...ed, condition: e.target.value }
+                                                  : ed
+                                              )
+                                            )
+                                          }
+                                          className="mt-0.5 w-full bg-transparent text-[10px] text-slate-400 focus:text-white outline-none"
+                                        />
+                                      </div>
+                                      <button
+                                        onClick={() =>
+                                          commitEdges(
+                                            workflowEdges,
+                                            skillEdges.filter((ed) => ed.id !== edge.id)
+                                          )
+                                        }
+                                        className="text-slate-500 hover:text-rose-400 cursor-pointer"
+                                        title="Unbind skill from agent"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  ))}
                                 </div>
                               ))}
                             </div>

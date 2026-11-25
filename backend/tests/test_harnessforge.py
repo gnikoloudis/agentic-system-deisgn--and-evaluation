@@ -750,7 +750,7 @@ def test_issue_6_workflow_handoff_edges_normalization_and_compilation():
         topo_cfg = json.loads(files_map[".harness-eval/topology_config.json"])
         assert all(e["source"] != "diff-audit" and e["target"] != "diff-audit" for e in topo_cfg["edges"])
 
-    # 4. SDLC (Custom) blueprint loads and compiles with zero skill-as-handoff corruption
+    # 4. SDLC (Custom) blueprint loads and compiles with zero skill-as-handoff corruption & sorted skill assignments
     sdlc_tuple = get_blueprint("planner-coder-verifier-custom")
     if sdlc_tuple is not None:
         sdlc_bp = sdlc_tuple[0]
@@ -758,6 +758,9 @@ def test_issue_6_workflow_handoff_edges_normalization_and_compilation():
         sdlc_skill_ids = {s.id for s in sdlc_bp.skills}
         assert all(e.source not in sdlc_skill_ids and e.target not in sdlc_skill_ids for e in sdlc_wf)
         assert [e.order for e in sdlc_wf] == list(range(1, len(sdlc_wf) + 1))
+        sdlc_sk = sdlc_bp.skill_binding_edges()
+        sk_keys = [(e.source.lower(), e.target.lower()) for e in sdlc_sk]
+        assert sk_keys == sorted(sk_keys)
 
 
 def test_generated_agent_files_match_canvas_details_and_omit_tba_for_non_tba():

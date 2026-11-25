@@ -439,7 +439,7 @@ def render_agent_runtime_constraints_markdown(
         lines.append("")
         lines.append("## Assigned Skills")
         lines.append("Apply the following skills when executing your tasks:")
-        for sk in assigned_skills:
+        for sk in sorted(assigned_skills, key=lambda s: resolve_effective_skill_slug(s)):
             slug = resolve_effective_skill_slug(sk)
             lines.append(f"- **`/{slug}`** (`{sk.name}`): {sk.description}")
 
@@ -557,7 +557,10 @@ class HarnessAdapter(ABC):
             for sk in bp.skills:
                 slug = resolve_effective_skill_slug(sk)
                 cmd = f" (`/{slug}`)"
-                assigned_agents = [f"`{e.source}`" for e in skill_edges if e.target == sk.id]
+                assigned_agents = sorted(
+                    {f"`{e.source}`" for e in skill_edges if e.target == sk.id},
+                    key=str.lower,
+                )
                 assigned_str = (
                     f" | **Assigned to**: {', '.join(assigned_agents)}"
                     if assigned_agents

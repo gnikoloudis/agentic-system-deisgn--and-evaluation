@@ -1039,17 +1039,17 @@ topology:
     order: 5
     required: true
     max_loops: 1
-  - id: e_skill_diff_audit
-    source: verifier
-    target: diff-audit
-    condition: Applies /diff-audit regression checklist
-    order: 6
-    required: false
-    max_loops: 1
   - id: e_ba-template-2_coder_611
     source: coder
     target: python-pro
     condition: Applies /python-pro
+    order: 6
+    required: false
+    max_loops: 1
+  - id: e_ba-template-8_coder_296
+    source: coder
+    target: tdd-guide
+    condition: Applies /tdd-guide
     order: 7
     required: false
     max_loops: 1
@@ -1074,24 +1074,24 @@ topology:
     order: 10
     required: false
     max_loops: 1
-  - id: e_verifier_ba-template-6_732
-    source: verifier
-    target: ba-template-6
-    condition: Applies /ba-template-6
-    order: 11
-    required: false
-    max_loops: 1
   - id: e_ba-template-7_planner_341
     source: planner
     target: react-expert
     condition: Applies /react-expert
+    order: 11
+    required: false
+    max_loops: 1
+  - id: e_verifier_ba-template-6_732
+    source: verifier
+    target: ba-template-6
+    condition: Applies /ba-template-6
     order: 12
     required: false
     max_loops: 1
-  - id: e_ba-template-8_coder_296
-    source: coder
-    target: tdd-guide
-    condition: Applies /tdd-guide
+  - id: e_skill_diff_audit
+    source: verifier
+    target: diff-audit
+    condition: Applies /diff-audit regression checklist
     order: 13
     required: false
     max_loops: 1

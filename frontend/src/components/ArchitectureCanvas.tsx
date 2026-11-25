@@ -548,10 +548,12 @@ export const ArchitectureCanvas: React.FC<Props> = ({
           required: false,
           max_loops: 1,
         };
-        const reorderedSkills = [...existingSkills, newSkillEdge].map((e, i) => ({
-          ...e,
-          order: existingWorkflow.length + i + 1,
-        }));
+        const reorderedSkills = [...existingSkills, newSkillEdge]
+          .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
+          .map((e, i) => ({
+            ...e,
+            order: existingWorkflow.length + i + 1,
+          }));
         onUpdateBlueprint({
           ...blueprint,
           topology: {
@@ -672,6 +674,12 @@ export const ArchitectureCanvas: React.FC<Props> = ({
             (agentIds.has(e.source) && skillIds.has(e.target)) ||
             (skillIds.has(e.source) && agentIds.has(e.target))
         )
+        .map((e) =>
+          skillIds.has(e.source)
+            ? { ...e, source: e.target, target: e.source, required: false, max_loops: 1 }
+            : e
+        )
+        .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
         .map((e, i) => ({ ...e, order: workflowEdges.length + i + 1 }));
 
       onUpdateBlueprint({

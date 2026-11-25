@@ -276,7 +276,7 @@ class AgentArchitecture(BaseModel):
             # Drop dangling or invalid edges (e.g., deleted node IDs or skill->skill)
 
         workflow_items.sort(key=lambda item: (item[0], item[1]))
-        skill_items.sort(key=lambda item: (item[0], item[1]))
+        skill_items.sort(key=lambda item: (item[2].source.lower(), item[2].target.lower()))
 
         normalized: List[TopologyEdge] = []
         for step_num, (_, _, ed) in enumerate(workflow_items, start=1):
@@ -298,15 +298,18 @@ class AgentArchitecture(BaseModel):
         )
 
     def skill_binding_edges(self) -> List[TopologyEdge]:
-        """Return strictly Agent-to-Skill assignment edges."""
+        """Return strictly Agent-to-Skill assignment edges sorted by (agent_id, skill_id)."""
         agent_ids = {self.orchestrator.id} | {sa.id for sa in self.subagents}
         skill_ids = {sk.id for sk in self.skills}
-        return [e for e in self.topology.edges if e.source in agent_ids and e.target in skill_ids]
+        return sorted(
+            [e for e in self.topology.edges if e.source in agent_ids and e.target in skill_ids],
+            key=lambda e: (e.source.lower(), e.target.lower()),
+        )
 
     def skills_for_agent(self, agent_id: str) -> List[SkillSpec]:
-        """Return SkillSpec objects explicitly bound to `agent_id` via topology skill edges."""
+        """Return SkillSpec objects explicitly bound to `agent_id`, sorted by skill ID."""
         bound_ids = {e.target for e in self.skill_binding_edges() if e.source == agent_id}
-        return [sk for sk in self.skills if sk.id in bound_ids]
+        return sorted([sk for sk in self.skills if sk.id in bound_ids], key=lambda sk: sk.id.lower())
 
 
 class CompiledFile(BaseModel):
