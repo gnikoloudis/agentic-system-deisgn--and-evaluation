@@ -44,6 +44,7 @@ orchestrator:
   - grep
   - glob
   - subagent
+  mcp_servers: []
   permissions:
     allow_shell: false
     allow_write: false
@@ -73,6 +74,7 @@ subagents:
   - read
   - grep
   - glob
+  mcp_servers: []
   permissions:
     allow_shell: false
     allow_write: false
@@ -109,6 +111,7 @@ subagents:
   - edit
   - grep
   - glob
+  mcp_servers: []
   permissions:
     allow_shell: false
     allow_write: true
@@ -147,6 +150,7 @@ subagents:
   - edit
   - grep
   - glob
+  mcp_servers: []
   permissions:
     allow_shell: false
     allow_write: true
@@ -180,6 +184,7 @@ subagents:
   - read
   - grep
   - glob
+  mcp_servers: []
   permissions:
     allow_shell: false
     allow_write: false
@@ -201,6 +206,7 @@ skills:
     \ (Edge/Boundary): **Given** <boundary>, **When** <action>, **Then** <expected outcome>.\n  - `TC-xxx-03`\
     \ (Negative/Error): **Given** <invalid input>, **When** <action>, **Then** <error response>.\n- **INVEST\
     \ Audit**: Independent | Negotiable | Valuable | Estimable | Small | Testable\n"
+  source_dir: null
   trigger_command: /user-story
 - id: delivery-rtm-pack
   name: BA Delivery Pack & Requirements Traceability Matrix (RTM)
@@ -218,7 +224,9 @@ skills:
     4. Full Requirements Traceability Matrix (RTM) linking `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `TC-xxx`.
 
     '
+  source_dir: null
   trigger_command: /delivery-rtm-pack
+commands: []
 hooks:
 - id: enforce_ba_delegation
   event: PreToolUse
@@ -293,26 +301,26 @@ topology:
 visual_layout:
   nodes:
     root_orchestrator:
-      x: -62.0
-      y: -159.0
+      x: -432.0
+      y: -189.0
     requirements_elicitor:
-      x: -78.0
-      y: 167.0
+      x: -664.0
+      y: 165.0
     workflow_architect:
-      x: -21.0
-      y: 516.0
+      x: -703.0
+      y: 534.0
     user_story_author:
-      x: 401.0
-      y: 42.0
+      x: -125.0
+      y: 444.0
     ba_qa_gatekeeper:
-      x: 1032.0
-      y: 112.0
+      x: 692.0
+      y: 444.0
     user-story:
-      x: 1128.0
-      y: 474.0
+      x: -204.0
+      y: 864.0
     delivery-rtm-pack:
-      x: 665.0
-      y: 714.0
+      x: -719.0
+      y: 872.0
     enforce_ba_delegation:
       x: 1026.0
       y: -159.0

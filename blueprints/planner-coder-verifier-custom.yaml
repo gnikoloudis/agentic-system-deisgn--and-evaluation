@@ -40,6 +40,7 @@ orchestrator:
   - grep
   - glob
   - subagent
+  mcp_servers: []
   permissions:
     allow_shell: false
     allow_write: false
@@ -73,6 +74,7 @@ subagents:
   - read
   - grep
   - glob
+  mcp_servers: []
   permissions:
     allow_shell: false
     allow_write: false
@@ -102,6 +104,7 @@ subagents:
   - grep
   - glob
   - bash
+  mcp_servers: []
   permissions:
     allow_shell: true
     allow_write: true
@@ -129,6 +132,7 @@ subagents:
   - read
   - grep
   - bash
+  mcp_servers: []
   permissions:
     allow_shell: true
     allow_write: false
@@ -154,6 +158,7 @@ subagents:
   - grep
   - glob
   - bash
+  mcp_servers: []
   permissions:
     allow_shell: true
     allow_write: true
@@ -175,7 +180,7 @@ skills:
     '
   source_dir: null
   trigger_command: /diff-audit
-- id: ba-template-2
+- id: python-pro
   name: Python Pro
   description: Master Python 3.12+ with modern features, async programming, performance optimization,
     and production-ready practices. Expert in the latest Python ecosystem including uv, ruff, pydantic,
@@ -429,8 +434,8 @@ skills:
 
     1. **Analyze requirements** for modern Python '
   source_dir: D:/AI Harness skills/skills/python-pro
-  trigger_command: /ba-template-2
-- id: ba-template-3
+  trigger_command: /python-pro
+- id: api_deisgn-principles
   name: Api Design Principles
   description: Master REST and GraphQL API design principles to build intuitive, scalable, and maintainable
     APIs that delight developers. Use when designing new APIs, reviewing API specifications, or establishing
@@ -617,8 +622,8 @@ skills:
 
     - **Tight Coupling**: API structure shouldn''t mirror database schema'
   source_dir: D:/AI Harness skills/skills/api-design-principles
-  trigger_command: /ba-template-3
-- id: ba-template-4
+  trigger_command: /api_deisgn-principles
+- id: fastpapi-expert
   name: Fastapi Expert
   description: 'Use when building high-performance async Python APIs with FastAPI and Pydantic V2. Invoke
     to create REST endpoints, define Pydantic models, implement authentication flows, set up async SQLAlchemy
@@ -686,8 +691,8 @@ skills:
     \nFastAPI, Pydantic V2, async SQLAlchemy, Alembic migrations, JWT/OAuth2, pytest-asyncio, httpx, BackgroundTasks,\
     \ WebSockets, dependency injection, OpenAPI/Swagger\n\n[Documentation](https://jeffallan.github.io/claude-skil"
   source_dir: D:/AI Harness skills/skills/fastapi-expert
-  trigger_command: /ba-template-4
-- id: ba-template-5
+  trigger_command: /fastpapi-expert
+- id: front-end-design
   name: Frontend Design
   description: Guidance for distinctive, intentional visual design when building new UI or reshaping an
     existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated
@@ -798,7 +803,7 @@ skills:
     a risk can be a risk itself! Build to a quality floor without announcing it: responsive down to mobile,
     visible keyboard focus, reduced motion respected. Critique your own work as you build, t'
   source_dir: D:/AI Harness skills/skills/frontend-design
-  trigger_command: /ba-template-5
+  trigger_command: /front-end-design
 - id: ba-template-6
   name: Code Documenter
   description: Generates, formats, and validates technical documentation — including docstrings, OpenAPI/Swagger
@@ -855,7 +860,7 @@ skills:
     \ NestJS, Express, GraphQL, Docusaurus, MkDocs, VitePress, Swagger UI, Redoc, Stoplight\n\n[Documentation](https://jeffallan.github.io/claude-skills/skills/quality/code-documenter/)"
   source_dir: D:/AI Harness skills/skills/code-documenter
   trigger_command: /ba-template-6
-- id: ba-template-7
+- id: react-expert
   name: React Expert
   description: Use when building React 18+ applications in .jsx or .tsx files, Next.js App Router projects,
     or create-react-app setups. Creates components, implements custom hooks, debugs rendering issues,
@@ -907,8 +912,8 @@ skills:
     \ Query, Zustand, Redux Toolkit, React Router, React Testing Library, Vitest/Jest, Next.js App Router,\
     \ accessibility (WCAG)\n\n[Documentation](https://jeffallan.github.io/claude-skills/skills/frontend/react-expert/)"
   source_dir: D:\AI Harness skills\skills\tdd-guide
-  trigger_command: /ba-template-7
-- id: ba-template-8
+  trigger_command: /react-expert
+- id: tdd-guide
   name: Tdd Guide
   description: Test-Driven Development specialist enforcing write-tests-first methodology. Use PROACTIVELY
     when writing new features, fixing bugs, or refactoring code. Ensures 80%+ test coverage.
@@ -975,7 +980,8 @@ skills:
     \ Depend on Each Other\n```typescript\n// DON'T rely on previous test\ntest('creates user', () =>\
     \ { /* ... */ })\ntest('updates"
   source_dir: D:/AI Harness skills/skills/tdd-guide
-  trigger_command: /ba-template-8
+  trigger_command: /tdd-guide
+commands: []
 hooks:
 - id: enforce_orchestrator_delegation
   event: PreToolUse
@@ -1041,28 +1047,28 @@ topology:
     required: false
     max_loops: 1
   - id: e_ba-template-2_coder_611
-    source: ba-template-2
+    source: python-pro
     target: coder
     condition: Step 7 handoff
     order: 7
     required: true
     max_loops: 1
   - id: e_ba-template-3_planner_043
-    source: ba-template-3
+    source: api_deisgn-principles
     target: planner
     condition: Step 8 handoff
     order: 8
     required: true
     max_loops: 1
   - id: e_ba-template-4_planner_683
-    source: ba-template-4
+    source: fastpapi-expert
     target: planner
     condition: Step 9 handoff
     order: 9
     required: true
     max_loops: 1
   - id: e_ba-template-5_planner_228
-    source: ba-template-5
+    source: front-end-design
     target: planner
     condition: Step 10 handoff
     order: 10
@@ -1076,14 +1082,14 @@ topology:
     required: false
     max_loops: 1
   - id: e_ba-template-7_planner_341
-    source: ba-template-7
+    source: react-expert
     target: planner
     condition: Step 12 handoff
     order: 12
     required: true
     max_loops: 1
   - id: e_ba-template-8_coder_296
-    source: ba-template-8
+    source: tdd-guide
     target: coder
     condition: Step 13 handoff
     order: 13
@@ -1095,17 +1101,17 @@ visual_layout:
       x: 401.0
       y: -115.0
     planner:
-      x: -72.0
-      y: 750.0
+      x: -604.0
+      y: 798.0
     coder:
-      x: 520.0
-      y: 381.0
+      x: 44.0
+      y: 609.0
     verifier:
-      x: 397.0
-      y: 712.0
+      x: 69.0
+      y: 912.0
     diff-audit:
-      x: 964.0
-      y: 513.0
+      x: 308.0
+      y: 1207.0
     enforce_orchestrator_delegation:
       x: 457.0
       y: -398.0
@@ -1115,24 +1121,24 @@ visual_layout:
     specialist_4:
       x: -474.0
       y: 60.0
-    ba-template-2:
-      x: 1288.0
-      y: 270.0
-    ba-template-3:
+    ba-template-6:
+      x: -185.0
+      y: 1206.0
+    api_deisgn-principles:
       x: -710.0
       y: 304.0
-    ba-template-4:
+    fastpapi-expert:
       x: -1138.0
       y: 328.0
-    ba-template-5:
+    front-end-design:
       x: -1193.0
       y: 659.0
-    ba-template-6:
-      x: 881.0
-      y: 966.0
-    ba-template-7:
-      x: -1048.0
-      y: 1140.0
-    ba-template-8:
+    react-expert:
+      x: -1128.0
+      y: 906.0
+    tdd-guide:
       x: 942.0
       y: 141.0
+    python-pro:
+      x: 1288.0
+      y: 270.0

@@ -40,6 +40,7 @@ orchestrator:
   - grep
   - glob
   - subagent
+  mcp_servers: []
   permissions:
     allow_shell: false
     allow_write: false
@@ -73,6 +74,7 @@ subagents:
   - read
   - grep
   - glob
+  mcp_servers: []
   permissions:
     allow_shell: false
     allow_write: false
@@ -102,6 +104,7 @@ subagents:
   - grep
   - glob
   - bash
+  mcp_servers: []
   permissions:
     allow_shell: true
     allow_write: true
@@ -121,7 +124,9 @@ subagents:
 
     2. Check that all task requirements and edge cases are satisfied without regressions.
 
-    3. End your response with `VERDICT: PASS` if all tests pass and code quality is high, or `VERDICT:
+    3. Use the palywright mcp to verifiy also the visual implementation
+
+    4. End your response with `VERDICT: PASS` if all tests pass and code quality is high, or `VERDICT:
     FAIL` followed by concrete, line-level defects for the `coder`.
 
     '
@@ -129,6 +134,8 @@ subagents:
   - read
   - grep
   - bash
+  mcp_servers:
+  - playwright
   permissions:
     allow_shell: true
     allow_write: false
@@ -154,6 +161,7 @@ subagents:
   - grep
   - glob
   - bash
+  mcp_servers: []
   permissions:
     allow_shell: true
     allow_write: true
@@ -976,6 +984,7 @@ skills:
     \ { /* ... */ })\ntest('updates"
   source_dir: D:/AI Harness skills/skills/tdd-guide
   trigger_command: /ba-template-8
+commands: []
 hooks:
 - id: enforce_orchestrator_delegation
   event: PreToolUse
@@ -992,7 +1001,17 @@ hooks:
   action: block
   command: null
   message: 'Cannot finish task until the `verifier` subagent has executed and reported VERDICT: PASS.'
-mcp_servers: []
+mcp_servers:
+- id: playwright
+  description: Playwright
+  transport: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-filesystem'
+  - .
+  url: null
+  env: {}
 topology:
   pattern: sequential-pipeline
   enforcement_mode: prompt
@@ -1104,8 +1123,8 @@ visual_layout:
       x: 397.0
       y: 712.0
     diff-audit:
-      x: 964.0
-      y: 513.0
+      x: 458.0
+      y: 1193.0
     enforce_orchestrator_delegation:
       x: 457.0
       y: -398.0
@@ -1128,11 +1147,14 @@ visual_layout:
       x: -1193.0
       y: 659.0
     ba-template-6:
-      x: 881.0
-      y: 966.0
+      x: 55.0
+      y: 1184.0
     ba-template-7:
       x: -1048.0
       y: 1140.0
     ba-template-8:
       x: 942.0
       y: 141.0
+    playwright:
+      x: 916.0
+      y: 1074.0
