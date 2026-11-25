@@ -1047,32 +1047,32 @@ topology:
     required: false
     max_loops: 1
   - id: e_ba-template-2_coder_611
-    source: python-pro
-    target: coder
-    condition: Step 7 handoff
+    source: coder
+    target: python-pro
+    condition: Applies /python-pro
     order: 7
-    required: true
+    required: false
     max_loops: 1
   - id: e_ba-template-3_planner_043
-    source: api_deisgn-principles
-    target: planner
-    condition: Step 8 handoff
+    source: planner
+    target: api_deisgn-principles
+    condition: Applies /api_deisgn-principles
     order: 8
-    required: true
+    required: false
     max_loops: 1
   - id: e_ba-template-4_planner_683
-    source: fastpapi-expert
-    target: planner
-    condition: Step 9 handoff
+    source: planner
+    target: fastpapi-expert
+    condition: Applies /fastpapi-expert
     order: 9
-    required: true
+    required: false
     max_loops: 1
   - id: e_ba-template-5_planner_228
-    source: front-end-design
-    target: planner
-    condition: Step 10 handoff
+    source: planner
+    target: front-end-design
+    condition: Applies /front-end-design
     order: 10
-    required: true
+    required: false
     max_loops: 1
   - id: e_verifier_ba-template-6_732
     source: verifier
@@ -1082,18 +1082,18 @@ topology:
     required: false
     max_loops: 1
   - id: e_ba-template-7_planner_341
-    source: react-expert
-    target: planner
-    condition: Step 12 handoff
+    source: planner
+    target: react-expert
+    condition: Applies /react-expert
     order: 12
-    required: true
+    required: false
     max_loops: 1
   - id: e_ba-template-8_coder_296
-    source: tdd-guide
-    target: coder
-    condition: Step 13 handoff
+    source: coder
+    target: tdd-guide
+    condition: Applies /tdd-guide
     order: 13
-    required: true
+    required: false
     max_loops: 1
 visual_layout:
   nodes:

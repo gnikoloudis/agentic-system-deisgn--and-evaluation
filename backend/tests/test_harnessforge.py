@@ -681,6 +681,85 @@ def test_issue_5_blocking_run_preflight_and_stale_cleanup(client: TestClient):
     assert ghost_del.json()["already_missing"] is True
 
 
+def test_issue_6_workflow_handoff_edges_normalization_and_compilation():
+    """Verify Issue #6: reversed skill->agent edges are normalized, workflow handoffs are separated from skill assignments,
+    and compiled markdown/subagents/topology_config reflect the true workflow design."""
+    from app.schemas.blueprint import AgentArchitecture, TopologyEdge
+
+    bp_tuple = get_blueprint("planner-coder-verifier")
+    assert bp_tuple is not None
+    bp = bp_tuple[0].model_copy(deep=True)
+
+    # Inject a reversed Skill -> Agent edge (required=True, generic 'Step 7 handoff'), a duplicate, and a dangling edge
+    bp.topology.edges.extend(
+        [
+            TopologyEdge(
+                id="e_reversed_skill",
+                source="diff-audit",
+                target="coder",
+                condition="Step 7 handoff",
+                order=99,
+                required=True,
+                max_loops=3,
+            ),
+            TopologyEdge(
+                id="e_dangling",
+                source="ghost_agent",
+                target="coder",
+                condition="Broken",
+                order=100,
+                required=True,
+                max_loops=1,
+            ),
+        ]
+    )
+    normalized = AgentArchitecture.model_validate(bp.model_dump())
+
+    # 1. Agent-to-agent workflow handoffs are strictly numbered 1..N with zero skill or dangling edges
+    wf_edges = normalized.workflow_handoff_edges()
+    assert [e.order for e in wf_edges] == list(range(1, len(wf_edges) + 1))
+    assert all(e.source != "diff-audit" and e.target != "diff-audit" for e in wf_edges)
+    assert all(e.source != "ghost_agent" for e in wf_edges)
+
+    # 2. Reversed skill->agent edge was flipped to coder -> diff-audit with required=False and clean condition
+    sk_edges = normalized.skill_binding_edges()
+    coder_skill_edge = next((e for e in sk_edges if e.source == "coder" and e.target == "diff-audit"), None)
+    assert coder_skill_edge is not None
+    assert coder_skill_edge.required is False
+    assert coder_skill_edge.max_loops == 1
+    assert coder_skill_edge.condition == "Applies /diff-audit"
+
+    # 3. Compilation across all 3 harnesses keeps skills out of Mandatory Workflow Topology & topology_config.json,
+    #    prints Assigned to in Section 5, and injects Assigned Skills into compiled subagent files
+    for harness, root_doc, subagent_path in (
+        ("antigravity", "GEMINI.md", ".agents/agents/coder.md"),
+        ("claude_code", "CLAUDE.md", ".claude/agents/coder.md"),
+        ("opencode", "AGENTS.md", ".opencode/agent/coder.md"),
+    ):
+        comp = compile_architecture(normalized, harness=harness, run_id="issue6-test")
+        files_map = {f.relative_path: f.content for f in comp.files}
+        root_md = files_map[root_doc]
+        topo_section = root_md.split("## 4. Mandatory Workflow Topology")[1].split("## 5. Available Skills")[0]
+        assert "diff-audit" not in topo_section
+        skills_section = root_md.split("## 5. Available Skills")[1].split("## 6.")[0]
+        assert "`coder`" in skills_section and "`diff-audit`" in skills_section
+
+        assert "## Assigned Skills" in files_map[subagent_path]
+        assert "`/diff-audit`" in files_map[subagent_path]
+
+        topo_cfg = json.loads(files_map[".harness-eval/topology_config.json"])
+        assert all(e["source"] != "diff-audit" and e["target"] != "diff-audit" for e in topo_cfg["edges"])
+
+    # 4. SDLC (Custom) blueprint loads and compiles with zero skill-as-handoff corruption
+    sdlc_tuple = get_blueprint("planner-coder-verifier-custom")
+    if sdlc_tuple is not None:
+        sdlc_bp = sdlc_tuple[0]
+        sdlc_wf = sdlc_bp.workflow_handoff_edges()
+        sdlc_skill_ids = {s.id for s in sdlc_bp.skills}
+        assert all(e.source not in sdlc_skill_ids and e.target not in sdlc_skill_ids for e in sdlc_wf)
+        assert [e.order for e in sdlc_wf] == list(range(1, len(sdlc_wf) + 1))
+
+
 
 
 

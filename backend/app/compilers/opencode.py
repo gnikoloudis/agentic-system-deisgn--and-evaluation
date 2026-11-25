@@ -94,6 +94,8 @@ class OpenCodeAdapter(HarnessAdapter):
             },
         }
 
+        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
+
         for sa in blueprint.subagents:
             model_id = self.resolve_agent_model(sa)
             sa_desc = json.dumps(f"{sa.name} — {sa.role}")
@@ -102,6 +104,17 @@ class OpenCodeAdapter(HarnessAdapter):
             sa_mcp_note = (
                 f"\n## Assigned MCP Servers\nYou are authorized to use tools from: {', '.join(f'`{m}`' for m in sa.mcp_servers)}.\n"
                 if sa.mcp_servers
+                else ""
+            )
+            sa_skills = blueprint.skills_for_agent(sa.id)
+            sa_skills_note = (
+                "\n## Assigned Skills\nApply the following skills when executing your tasks:\n"
+                + "\n".join(
+                    f"- **`/{resolve_effective_skill_slug(sk)}`** (`{sk.name}`): {sk.description}"
+                    for sk in sa_skills
+                )
+                + "\n"
+                if sa_skills
                 else ""
             )
             subagent_md = (
@@ -118,6 +131,7 @@ class OpenCodeAdapter(HarnessAdapter):
                 + "---\n\n"
                 f"# {sa.name} (`{sa.id}`)\n\n"
                 f"{sa.system_prompt.strip()}\n"
+                f"{sa_skills_note}"
                 f"{sa_mcp_note}"
             )
             files.append(
@@ -131,7 +145,7 @@ class OpenCodeAdapter(HarnessAdapter):
                 "mode": "all",
                 "model": model_id,
                 "description": f"{sa.name} — {sa.role}",
-                "prompt": f"# {sa.name} (`{sa.id}`)\n\n{sa.system_prompt.strip()}{sa_mcp_note}",
+                "prompt": f"# {sa.name} (`{sa.id}`)\n\n{sa.system_prompt.strip()}{sa_skills_note}{sa_mcp_note}",
                 "tools": {
                     "write": sa.permissions.allow_write,
                     "edit": sa.permissions.allow_write,
@@ -141,7 +155,6 @@ class OpenCodeAdapter(HarnessAdapter):
             }
 
         # 3. Skills & Commands -> .opencode/skills/<slug>/** (including references/scripts/assets) + .opencode/command/<slug>.md
-        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
 
         for sk in blueprint.skills:
             slug = resolve_effective_skill_slug(sk)

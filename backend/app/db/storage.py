@@ -54,8 +54,10 @@ def save_blueprint(blueprint: AgentArchitecture, raw_yaml_override: Optional[str
     ensure_directories()
     if raw_yaml_override is not None:
         blueprint = yaml_to_blueprint(raw_yaml_override)
-        yaml_str = raw_yaml_override
+        blueprint.normalize_topology_edges()
+        yaml_str = blueprint_to_yaml(blueprint)
     else:
+        blueprint.normalize_topology_edges()
         yaml_str = blueprint_to_yaml(blueprint)
     target_path = BLUEPRINTS_DIR / f"{blueprint.metadata.id}.yaml"
     target_path.write_text(yaml_str, encoding="utf-8")

@@ -277,43 +277,79 @@ export const ArchitectureCanvas: React.FC<Props> = ({
       });
     });
 
+    const agentIds = new Set([
+      blueprint.orchestrator.id,
+      ...blueprint.subagents.map((s) => s.id),
+    ]);
     const skillIds = new Set(blueprint.skills.map((s) => s.id));
     const hookIds = new Set(blueprint.hooks.map((h) => h.id));
     const mcpIds = new Set((blueprint.mcp_servers || []).map((m) => m.id));
 
-    const flowEdges: Edge[] = blueprint.topology.edges.map((e) => {
-      const isSkillEdge = skillIds.has(e.target) || skillIds.has(e.source);
-      const isLoop = !isSkillEdge && e.max_loops > 1 && e.order >= 3;
-      const strokeColor = isSkillEdge
-        ? "#10b981"
-        : isLoop
-        ? "#f59e0b"
-        : e.required
-        ? "#38bdf8"
-        : "#94a3b8";
-      return {
-        id: e.id,
-        source: e.source,
-        target: e.target,
-        label: isSkillEdge
-          ? `Uses Skill: ${e.condition}`
-          : `#${e.order} ${e.condition}${e.max_loops > 1 ? ` (≤${e.max_loops}x)` : ""}`,
-        animated: !isSkillEdge,
-        style: {
-          stroke: strokeColor,
-          strokeWidth: 2.2,
-          strokeDasharray: isSkillEdge ? "6 4" : undefined,
-        },
-        labelStyle: { fill: "#e2e8f0", fontSize: 11, fontWeight: 600 },
-        labelBgStyle: { fill: "#0f172a", fillOpacity: 0.9 },
-        labelBgPadding: [6, 3] as [number, number],
-        labelBgBorderRadius: 6,
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          color: strokeColor,
-        },
-      };
-    });
+    const workflowEdges = blueprint.topology.edges
+      .filter((e) => agentIds.has(e.source) && agentIds.has(e.target))
+      .sort((a, b) => a.order - b.order);
+
+    const skillBindingEdges = blueprint.topology.edges.filter(
+      (e) =>
+        (agentIds.has(e.source) && skillIds.has(e.target)) ||
+        (skillIds.has(e.source) && agentIds.has(e.target))
+    );
+
+    const flowEdges: Edge[] = [
+      ...workflowEdges.map((e, idx) => {
+        const stepNum = idx + 1;
+        const isLoop = e.max_loops > 1 && !e.required;
+        const strokeColor = isLoop
+          ? "#f59e0b"
+          : e.required
+          ? "#38bdf8"
+          : "#94a3b8";
+        return {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          label: `#${stepNum} ${e.condition}${e.max_loops > 1 ? ` (≤${e.max_loops}x)` : ""}`,
+          animated: true,
+          style: {
+            stroke: strokeColor,
+            strokeWidth: 2.2,
+          },
+          labelStyle: { fill: "#e2e8f0", fontSize: 11, fontWeight: 600 },
+          labelBgStyle: { fill: "#0f172a", fillOpacity: 0.9 },
+          labelBgPadding: [6, 3] as [number, number],
+          labelBgBorderRadius: 6,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: strokeColor,
+          },
+        };
+      }),
+      ...skillBindingEdges.map((e) => {
+        const isReversed = skillIds.has(e.source) && agentIds.has(e.target);
+        const agentId = isReversed ? e.target : e.source;
+        const skillId = isReversed ? e.source : e.target;
+        return {
+          id: e.id,
+          source: agentId,
+          target: skillId,
+          label: `Uses Skill: /${skillId}`,
+          animated: false,
+          style: {
+            stroke: "#10b981",
+            strokeWidth: 2.0,
+            strokeDasharray: "6 4",
+          },
+          labelStyle: { fill: "#a7f3d0", fontSize: 10, fontWeight: 600 },
+          labelBgStyle: { fill: "#0f172a", fillOpacity: 0.9 },
+          labelBgPadding: [6, 3] as [number, number],
+          labelBgBorderRadius: 6,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: "#10b981",
+          },
+        };
+      }),
+    ];
 
     // Automatically render Guardrail Hook -> Target Agent binding edges
     blueprint.hooks.forEach((hk) => {
@@ -464,28 +500,111 @@ export const ArchitectureCanvas: React.FC<Props> = ({
         }
       }
 
-      const isTargetSkill = blueprint.skills.some((s) => s.id === connection.target);
+      const agentIds = new Set([
+        blueprint.orchestrator.id,
+        ...blueprint.subagents.map((s) => s.id),
+      ]);
+      const skillIds = new Set(blueprint.skills.map((s) => s.id));
+
+      const isSourceSkill = skillIds.has(connection.source);
+      const isTargetSkill = skillIds.has(connection.target);
+
+      // Skill <-> Agent binding (always normalize direction to Agent -> Skill, required: false)
+      if (isSourceSkill || isTargetSkill) {
+        if (isSourceSkill && isTargetSkill) return; // Cannot connect skill to skill
+        const agentId = isSourceSkill ? connection.target : connection.source;
+        const skillId = isSourceSkill ? connection.source : connection.target;
+        if (!agentIds.has(agentId)) return;
+
+        const alreadyBound = blueprint.topology.edges.some(
+          (e) =>
+            (e.source === agentId && e.target === skillId) ||
+            (e.source === skillId && e.target === agentId)
+        );
+        if (alreadyBound) return;
+
+        const existingWorkflow = blueprint.topology.edges
+          .filter((e) => agentIds.has(e.source) && agentIds.has(e.target))
+          .sort((a, b) => a.order - b.order)
+          .map((e, i) => ({ ...e, order: i + 1 }));
+        const existingSkills = blueprint.topology.edges
+          .filter(
+            (e) =>
+              (agentIds.has(e.source) && skillIds.has(e.target)) ||
+              (skillIds.has(e.source) && agentIds.has(e.target))
+          )
+          .map((e) =>
+            skillIds.has(e.source)
+              ? { ...e, source: e.target, target: e.source, required: false, max_loops: 1 }
+              : { ...e, required: false, max_loops: 1 }
+          );
+
+        const newSkillEdge = {
+          id: `e_${agentId}_${skillId}_${Date.now().toString().slice(-3)}`,
+          source: agentId,
+          target: skillId,
+          condition: `Applies /${skillId}`,
+          order: existingWorkflow.length + existingSkills.length + 1,
+          required: false,
+          max_loops: 1,
+        };
+        const reorderedSkills = [...existingSkills, newSkillEdge].map((e, i) => ({
+          ...e,
+          order: existingWorkflow.length + i + 1,
+        }));
+        onUpdateBlueprint({
+          ...blueprint,
+          topology: {
+            ...blueprint.topology,
+            edges: [...existingWorkflow, ...reorderedSkills],
+          },
+        });
+        return;
+      }
+
+      // Agent -> Agent workflow handoff edge
+      if (!agentIds.has(connection.source) || !agentIds.has(connection.target)) return;
+      if (connection.source === connection.target) return;
+      const alreadyExists = blueprint.topology.edges.some(
+        (e) => e.source === connection.source && e.target === connection.target
+      );
+      if (alreadyExists) return;
+
+      const existingWorkflow = blueprint.topology.edges
+        .filter((e) => agentIds.has(e.source) && agentIds.has(e.target))
+        .sort((a, b) => a.order - b.order);
+      const existingSkills = blueprint.topology.edges.filter(
+        (e) =>
+          (agentIds.has(e.source) && skillIds.has(e.target)) ||
+          (skillIds.has(e.source) && agentIds.has(e.target))
+      );
+
+      const nextOrder = existingWorkflow.length + 1;
       const newEdgeId = `e_${connection.source}_${connection.target}_${Date.now().toString().slice(-3)}`;
-      const nextOrder = blueprint.topology.edges.length + 1;
-      const updated: AgentArchitecture = {
+      const nextWorkflow = [
+        ...existingWorkflow,
+        {
+          id: newEdgeId,
+          source: connection.source,
+          target: connection.target,
+          condition: `Step ${nextOrder}: Delegate to ${connection.target}`,
+          order: nextOrder,
+          required: true,
+          max_loops: 1,
+        },
+      ].map((e, i) => ({ ...e, order: i + 1 }));
+      const nextSkills = existingSkills.map((e, i) => ({
+        ...e,
+        order: nextWorkflow.length + i + 1,
+      }));
+
+      onUpdateBlueprint({
         ...blueprint,
         topology: {
           ...blueprint.topology,
-          edges: [
-            ...blueprint.topology.edges,
-            {
-              id: newEdgeId,
-              source: connection.source,
-              target: connection.target,
-              condition: isTargetSkill ? `Applies /${connection.target}` : `Step ${nextOrder} handoff`,
-              order: nextOrder,
-              required: !isTargetSkill,
-              max_loops: 1,
-            },
-          ],
+          edges: [...nextWorkflow, ...nextSkills],
         },
-      };
-      onUpdateBlueprint(updated);
+      });
     },
     [blueprint, onUpdateBlueprint]
   );
@@ -537,11 +656,29 @@ export const ArchitectureCanvas: React.FC<Props> = ({
       const deletedEdgeIds = new Set(deletedEdges.map((e) => e.id));
       const remainingEdges = blueprint.topology.edges.filter((e) => !deletedEdgeIds.has(e.id));
       if (remainingEdges.length === blueprint.topology.edges.length) return;
+
+      const agentIds = new Set([
+        blueprint.orchestrator.id,
+        ...blueprint.subagents.map((s) => s.id),
+      ]);
+      const skillIds = new Set(blueprint.skills.map((s) => s.id));
+      const workflowEdges = remainingEdges
+        .filter((e) => agentIds.has(e.source) && agentIds.has(e.target))
+        .sort((a, b) => a.order - b.order)
+        .map((e, i) => ({ ...e, order: i + 1 }));
+      const skillEdges = remainingEdges
+        .filter(
+          (e) =>
+            (agentIds.has(e.source) && skillIds.has(e.target)) ||
+            (skillIds.has(e.source) && agentIds.has(e.target))
+        )
+        .map((e, i) => ({ ...e, order: workflowEdges.length + i + 1 }));
+
       onUpdateBlueprint({
         ...blueprint,
         topology: {
           ...blueprint.topology,
-          edges: remainingEdges,
+          edges: [...workflowEdges, ...skillEdges],
         },
       });
     },

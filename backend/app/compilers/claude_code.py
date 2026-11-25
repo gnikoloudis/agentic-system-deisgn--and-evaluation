@@ -66,6 +66,8 @@ class ClaudeCodeAdapter(HarnessAdapter):
         )
 
         # 2. Subagents -> .claude/agents/<id>.md
+        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
+
         for sa in blueprint.subagents:
             sa_tools = self._map_tools(sa.tools, sa.permissions.allow_write, sa.permissions.allow_shell)
             for mcp_id in sa.mcp_servers:
@@ -79,6 +81,17 @@ class ClaudeCodeAdapter(HarnessAdapter):
                 if sa.mcp_servers
                 else ""
             )
+            sa_skills = blueprint.skills_for_agent(sa.id)
+            skills_note = (
+                "\n## Assigned Skills\nApply the following skills when executing your tasks:\n"
+                + "\n".join(
+                    f"- **`/{resolve_effective_skill_slug(sk)}`** (`{sk.name}`): {sk.description}"
+                    for sk in sa_skills
+                )
+                + "\n"
+                if sa_skills
+                else ""
+            )
             subagent_md = (
                 "---\n"
                 f"name: {sa.id}\n"
@@ -88,6 +101,7 @@ class ClaudeCodeAdapter(HarnessAdapter):
                 "---\n\n"
                 f"# {sa.name} (`{sa.id}`)\n\n"
                 f"{sa.system_prompt.strip()}\n"
+                f"{skills_note}"
                 f"{mcp_note}"
             )
             files.append(
@@ -99,7 +113,6 @@ class ClaudeCodeAdapter(HarnessAdapter):
             )
 
         # 3. Skills & Slash Commands -> .claude/skills/<slug>/** (including references/scripts/assets) and .claude/commands/<slug>.md
-        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
 
         for sk in blueprint.skills:
             slug = resolve_effective_skill_slug(sk)

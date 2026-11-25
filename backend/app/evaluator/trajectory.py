@@ -130,17 +130,18 @@ def analyze_trajectory_and_topology(
         nb.token_share_pct = round((nb.total_tokens / total_tok) * 100.0, 1) if total_tok > 0 else 0.0
         nb.time_share_pct = round((nb.duration_ms / total_duration_ms) * 100.0, 1) if total_duration_ms > 0 else 0.0
 
-    # Evaluate Topology Adherence against blueprint.topology.edges
+    # Evaluate Topology Adherence against strictly Agent-to-Agent workflow handoff edges
     subagent_ids = {sa.id for sa in blueprint.subagents}
+    workflow_edges = blueprint.workflow_handoff_edges()
     required_subagent_edges = [
-        e for e in blueprint.topology.edges if e.required and e.target in subagent_ids
+        e for e in workflow_edges if e.required and e.target in subagent_ids
     ]
     expected_edges_total = len(required_subagent_edges)
     visited_set = set(visited_subagents)
     expected_edges_traversed = sum(1 for e in required_subagent_edges if e.target in visited_set)
     skipped_required = max(0, expected_edges_total - expected_edges_traversed)
 
-    defined_targets = {e.target for e in blueprint.topology.edges}
+    defined_targets = {e.target for e in workflow_edges}
     unplanned_transitions = sum(1 for sa_id in visited_subagents if defined_targets and sa_id not in defined_targets)
     loop_iterations = max(0, len(visited_subagents) - len(visited_set))
 

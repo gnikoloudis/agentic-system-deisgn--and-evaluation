@@ -100,6 +100,8 @@ class AntigravityAdapter(HarnessAdapter):
         )
 
         # 2. Subagents -> .agents/agents/<id>.md and .agent/agents/<id>.md
+        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
+
         for sa in blueprint.subagents:
             model_tier = self.resolve_agent_model(sa)
             sa_desc = json.dumps(f"{sa.name} — {sa.role}")
@@ -107,6 +109,17 @@ class AntigravityAdapter(HarnessAdapter):
             mcp_note = (
                 f"\n## Assigned MCP Servers\nYou are authorized to use MCP tools from: {', '.join(f'`{m}`' for m in sa.mcp_servers)}.\n"
                 if sa.mcp_servers
+                else ""
+            )
+            sa_skills = blueprint.skills_for_agent(sa.id)
+            skills_note = (
+                "\n## Assigned Skills\nApply the following skills when executing your tasks:\n"
+                + "\n".join(
+                    f"- **`/{resolve_effective_skill_slug(sk)}`** (`{sk.name}`): {sk.description}"
+                    for sk in sa_skills
+                )
+                + "\n"
+                if sa_skills
                 else ""
             )
             subagent_md = (
@@ -119,6 +132,7 @@ class AntigravityAdapter(HarnessAdapter):
                 "---\n\n"
                 f"# {sa.name} (`{sa.id}`)\n\n"
                 f"{sa.system_prompt.strip()}\n"
+                f"{skills_note}"
                 f"{mcp_note}"
             )
             files.append(
@@ -137,7 +151,6 @@ class AntigravityAdapter(HarnessAdapter):
             )
 
         # 3. Skills -> .agents/skills/<slug>/** and .agent/skills/<slug>/** (supports folder-backed references/scripts/assets)
-        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
 
         for sk in blueprint.skills:
             slug = resolve_effective_skill_slug(sk)

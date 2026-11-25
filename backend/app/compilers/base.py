@@ -442,18 +442,21 @@ class HarnessAdapter(ABC):
                 )
             lines.append("")
 
-        if bp.topology.edges:
+        bp.normalize_topology_edges()
+        workflow_edges = bp.workflow_handoff_edges()
+        skill_edges = bp.skill_binding_edges()
+
+        if workflow_edges:
             lines.append(
                 f"## 4. Mandatory Workflow Topology (`{bp.topology.pattern}` — Enforcement: `{bp.topology.enforcement_mode}`)"
             )
             lines.append(
-                "You MUST adhere to the following directed transition sequence when delegating across subagents and skills:"
+                "You MUST adhere to the following directed agent-to-agent handoff sequence when delegating across subagents:"
             )
-            sorted_edges = sorted(bp.topology.edges, key=lambda e: e.order)
-            for edge in sorted_edges:
+            for idx, edge in enumerate(workflow_edges, start=1):
                 req_badge = "REQUIRED" if edge.required else "CONDITIONAL"
                 lines.append(
-                    f"{edge.order}. **`{edge.source}` -> `{edge.target}`** [{req_badge}] "
+                    f"{idx}. **`{edge.source}` -> `{edge.target}`** [{req_badge}] "
                     f"— *Trigger*: {edge.condition} (Max loops: `{edge.max_loops}`)"
                 )
             lines.append("")
@@ -461,8 +464,15 @@ class HarnessAdapter(ABC):
         if bp.skills:
             lines.append("## 5. Available Skills & Workflows")
             for sk in bp.skills:
-                cmd = f" (`{sk.trigger_command}`)" if sk.trigger_command else ""
-                lines.append(f"- **`{sk.id}`**{cmd}: {sk.description}")
+                slug = resolve_effective_skill_slug(sk)
+                cmd = f" (`/{slug}`)"
+                assigned_agents = [f"`{e.source}`" for e in skill_edges if e.target == sk.id]
+                assigned_str = (
+                    f" | **Assigned to**: {', '.join(assigned_agents)}"
+                    if assigned_agents
+                    else " | **Assigned to**: *Available to all agents*"
+                )
+                lines.append(f"- **`{slug}`**{cmd}: {sk.description}{assigned_str}")
             lines.append("")
 
         if bp.commands:

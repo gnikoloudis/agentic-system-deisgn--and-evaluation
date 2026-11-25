@@ -2504,63 +2504,238 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Topology Edges Table */}
-                  <div className="pt-3 border-t border-slate-800">
-                    <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-                      Workflow Handoff Edges ({selectedBlueprint.topology.edges.length})
-                    </div>
-                    <div className="space-y-2">
-                      {selectedBlueprint.topology.edges.map((edge) => (
-                        <div
-                          key={edge.id}
-                          className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 font-mono text-[11px] text-cyan-300">
-                              <span>#{edge.order}</span>
-                              <span>{edge.source}</span>
-                              <ArrowRight className="w-3 h-3" />
-                              <span>{edge.target}</span>
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-300">
-                                ≤{edge.max_loops}x
-                              </span>
-                            </div>
-                            <input
-                              value={edge.condition}
-                              onChange={(e) =>
-                                handleCanvasBlueprintChange({
-                                  ...selectedBlueprint,
-                                  topology: {
-                                    ...selectedBlueprint.topology,
-                                    edges: selectedBlueprint.topology.edges.map((ed) =>
-                                      ed.id === edge.id ? { ...ed, condition: e.target.value } : ed
-                                    ),
-                                  },
-                                })
-                              }
-                              className="mt-1 w-full bg-transparent text-[11px] text-slate-400 focus:text-white outline-none"
-                            />
+                  {/* Topology Edges Table — Separated into Workflow Handoffs (Agent -> Agent) and Skill Assignments (Agent -> Skill) */}
+                  {(() => {
+                    const agentIds = new Set([
+                      selectedBlueprint.orchestrator.id,
+                      ...selectedBlueprint.subagents.map((s) => s.id),
+                    ]);
+                    const skillIds = new Set(selectedBlueprint.skills.map((s) => s.id));
+                    const workflowEdges = selectedBlueprint.topology.edges
+                      .filter((e) => agentIds.has(e.source) && agentIds.has(e.target))
+                      .sort((a, b) => a.order - b.order);
+                    const skillEdges = selectedBlueprint.topology.edges
+                      .filter(
+                        (e) =>
+                          (agentIds.has(e.source) && skillIds.has(e.target)) ||
+                          (skillIds.has(e.source) && agentIds.has(e.target))
+                      )
+                      .map((e) =>
+                        skillIds.has(e.source)
+                          ? { ...e, source: e.target, target: e.source, required: false, max_loops: 1 }
+                          : e
+                      );
+
+                    const commitEdges = (
+                      nextWorkflow: typeof workflowEdges,
+                      nextSkills: typeof skillEdges
+                    ) => {
+                      const renumberedWorkflow = nextWorkflow.map((ed, idx) => ({
+                        ...ed,
+                        order: idx + 1,
+                      }));
+                      const renumberedSkills = nextSkills.map((ed, idx) => ({
+                        ...ed,
+                        order: renumberedWorkflow.length + idx + 1,
+                        required: false,
+                        max_loops: 1,
+                      }));
+                      handleCanvasBlueprintChange({
+                        ...selectedBlueprint,
+                        topology: {
+                          ...selectedBlueprint.topology,
+                          edges: [...renumberedWorkflow, ...renumberedSkills],
+                        },
+                      });
+                    };
+
+                    const moveWorkflowEdge = (index: number, delta: -1 | 1) => {
+                      const targetIdx = index + delta;
+                      if (targetIdx < 0 || targetIdx >= workflowEdges.length) return;
+                      const reordered = [...workflowEdges];
+                      const [moved] = reordered.splice(index, 1);
+                      reordered.splice(targetIdx, 0, moved);
+                      commitEdges(reordered, skillEdges);
+                    };
+
+                    return (
+                      <div className="pt-3 border-t border-slate-800 space-y-4">
+                        {/* 1. Agent-to-Agent Workflow Handoff Edges */}
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-wider text-cyan-300 mb-2">
+                            Workflow Handoff Edges ({workflowEdges.length})
                           </div>
-                          <button
-                            onClick={() =>
-                              handleCanvasBlueprintChange({
-                                ...selectedBlueprint,
-                                topology: {
-                                  ...selectedBlueprint.topology,
-                                  edges: selectedBlueprint.topology.edges.filter(
-                                    (ed) => ed.id !== edge.id
-                                  ),
-                                },
-                              })
-                            }
-                            className="text-slate-500 hover:text-rose-400"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                          {workflowEdges.length === 0 ? (
+                            <div className="text-[11px] text-slate-500 italic">
+                              No agent-to-agent handoffs yet. Drag from an Orchestrator or Subagent handle to another Subagent on the canvas.
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              {workflowEdges.map((edge, idx) => (
+                                <div
+                                  key={edge.id}
+                                  className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1.5"
+                                >
+                                  <div className="flex items-center justify-between gap-1.5">
+                                    <div className="flex items-center gap-1.5 font-mono text-[11px] text-cyan-300 min-w-0 flex-wrap">
+                                      <span className="px-1.5 py-0.2 rounded bg-cyan-950/80 border border-cyan-800/60 text-cyan-200 font-bold">
+                                        #{idx + 1}
+                                      </span>
+                                      <span className="truncate">{edge.source}</span>
+                                      <ArrowRight className="w-3 h-3 shrink-0" />
+                                      <span className="truncate">{edge.target}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                      <button
+                                        onClick={() => moveWorkflowEdge(idx, -1)}
+                                        disabled={idx === 0}
+                                        className="px-1 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-25 text-[10px] cursor-pointer"
+                                        title="Move step earlier"
+                                      >
+                                        ↑
+                                      </button>
+                                      <button
+                                        onClick={() => moveWorkflowEdge(idx, 1)}
+                                        disabled={idx === workflowEdges.length - 1}
+                                        className="px-1 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-white disabled:opacity-25 text-[10px] cursor-pointer"
+                                        title="Move step later"
+                                      >
+                                        ↓
+                                      </button>
+                                      <button
+                                        onClick={() =>
+                                          commitEdges(
+                                            workflowEdges.filter((ed) => ed.id !== edge.id),
+                                            skillEdges
+                                          )
+                                        }
+                                        className="p-0.5 text-slate-500 hover:text-rose-400 cursor-pointer"
+                                        title="Delete handoff edge"
+                                      >
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      onClick={() =>
+                                        commitEdges(
+                                          workflowEdges.map((ed) =>
+                                            ed.id === edge.id ? { ...ed, required: !ed.required } : ed
+                                          ),
+                                          skillEdges
+                                        )
+                                      }
+                                      className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase cursor-pointer border ${
+                                        edge.required
+                                          ? "bg-sky-950/80 text-sky-300 border-sky-700/60"
+                                          : "bg-amber-950/70 text-amber-300 border-amber-700/60"
+                                      }`}
+                                      title="Toggle Required vs Conditional handoff"
+                                    >
+                                      {edge.required ? "Required" : "Conditional"}
+                                    </button>
+                                    <select
+                                      value={edge.max_loops}
+                                      onChange={(e) =>
+                                        commitEdges(
+                                          workflowEdges.map((ed) =>
+                                            ed.id === edge.id
+                                              ? { ...ed, max_loops: Number(e.target.value) }
+                                              : ed
+                                          ),
+                                          skillEdges
+                                        )
+                                      }
+                                      className="bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 text-[10px] text-slate-300"
+                                      title="Max retry loops along this edge"
+                                    >
+                                      {[1, 2, 3, 5, 10].map((n) => (
+                                        <option key={n} value={n}>
+                                          ≤{n}x
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <input
+                                      value={edge.condition}
+                                      onChange={(e) =>
+                                        commitEdges(
+                                          workflowEdges.map((ed) =>
+                                            ed.id === edge.id
+                                              ? { ...ed, condition: e.target.value }
+                                              : ed
+                                          ),
+                                          skillEdges
+                                        )
+                                      }
+                                      className="flex-1 min-w-0 bg-slate-900/60 border border-slate-800/80 rounded px-2 py-0.5 text-[11px] text-slate-300 focus:text-white focus:border-cyan-600 outline-none"
+                                      placeholder="Trigger / handoff condition..."
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
-                      ))}
-                    </div>
-                  </div>
+
+                        {/* 2. Skill Assignments (Agent -> Skill) */}
+                        <div className="pt-2 border-t border-slate-800/70">
+                          <div className="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2">
+                            Skill Assignments ({skillEdges.length})
+                          </div>
+                          {skillEdges.length === 0 ? (
+                            <div className="text-[11px] text-slate-500 italic">
+                              No agent-specific skill bindings. Drag between any Agent and Skill node on the canvas to assign a skill.
+                            </div>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {skillEdges.map((edge) => (
+                                <div
+                                  key={edge.id}
+                                  className="p-2 rounded-lg bg-slate-950 border border-emerald-900/50 flex items-center justify-between gap-2"
+                                >
+                                  <div className="min-w-0 flex-1">
+                                    <div className="flex items-center gap-1.5 font-mono text-[11px] text-emerald-300">
+                                      <span className="text-cyan-300">{edge.source}</span>
+                                      <ArrowRight className="w-3 h-3 text-emerald-500 shrink-0" />
+                                      <span className="truncate">/{edge.target}</span>
+                                    </div>
+                                    <input
+                                      value={edge.condition}
+                                      onChange={(e) =>
+                                        commitEdges(
+                                          workflowEdges,
+                                          skillEdges.map((ed) =>
+                                            ed.id === edge.id
+                                              ? { ...ed, condition: e.target.value }
+                                              : ed
+                                          )
+                                        )
+                                      }
+                                      className="mt-0.5 w-full bg-transparent text-[10px] text-slate-400 focus:text-white outline-none"
+                                    />
+                                  </div>
+                                  <button
+                                    onClick={() =>
+                                      commitEdges(
+                                        workflowEdges,
+                                        skillEdges.filter((ed) => ed.id !== edge.id)
+                                      )
+                                    }
+                                    className="text-slate-500 hover:text-rose-400 cursor-pointer"
+                                    title="Unbind skill from agent"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
 

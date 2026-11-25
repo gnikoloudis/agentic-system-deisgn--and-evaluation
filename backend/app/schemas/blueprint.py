@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, List, Literal, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 HarnessType = Literal["claude_code", "antigravity", "opencode"]
@@ -209,6 +210,103 @@ class AgentArchitecture(BaseModel):
     mcp_servers: List[MCPServerSpec] = Field(default_factory=list)
     topology: TopologySpec = Field(default_factory=TopologySpec)
     visual_layout: VisualLayout = Field(default_factory=VisualLayout)
+
+    @model_validator(mode="after")
+    def normalize_topology_edges(self) -> "AgentArchitecture":
+        """Canonicalize topology edges: separate agent-to-agent handoffs from skill bindings,
+        auto-flip reversed skill->agent edges, prune dangling/duplicate edges, and renumber handoff steps 1..N."""
+        agent_ids = {self.orchestrator.id} | {sa.id for sa in self.subagents}
+        skill_ids = {sk.id for sk in self.skills}
+        generic_handoff_re = re.compile(r"^step\s+\d+\s+handoff$", re.IGNORECASE)
+
+        workflow_items: List[tuple[int, int, TopologyEdge]] = []
+        skill_items: List[tuple[int, int, TopologyEdge]] = []
+        seen_workflow_pairs: set[tuple[str, str]] = set()
+        seen_skill_pairs: set[tuple[str, str]] = set()
+
+        for idx, edge in enumerate(self.topology.edges):
+            src, tgt = edge.source, edge.target
+
+            # 1. Agent -> Agent workflow handoff edge
+            if src in agent_ids and tgt in agent_ids and src != tgt:
+                pair = (src, tgt)
+                if pair in seen_workflow_pairs:
+                    continue
+                seen_workflow_pairs.add(pair)
+                workflow_items.append((edge.order, idx, edge))
+                continue
+
+            # 2. Agent -> Skill binding edge
+            if src in agent_ids and tgt in skill_ids:
+                pair = (src, tgt)
+                if pair in seen_skill_pairs:
+                    continue
+                seen_skill_pairs.add(pair)
+                cond = (edge.condition or "").strip()
+                if not cond or generic_handoff_re.match(cond):
+                    cond = f"Applies /{tgt}"
+                norm_edge = edge.model_copy(
+                    update={"source": src, "target": tgt, "condition": cond, "required": False, "max_loops": 1}
+                )
+                skill_items.append((edge.order, idx, norm_edge))
+                continue
+
+            # 3. Reversed Skill -> Agent edge (auto-flip to Agent -> Skill)
+            if src in skill_ids and tgt in agent_ids:
+                agent_id, skill_id = tgt, src
+                pair = (agent_id, skill_id)
+                if pair in seen_skill_pairs:
+                    continue
+                seen_skill_pairs.add(pair)
+                cond = (edge.condition or "").strip()
+                if not cond or generic_handoff_re.match(cond):
+                    cond = f"Applies /{skill_id}"
+                norm_edge = edge.model_copy(
+                    update={
+                        "source": agent_id,
+                        "target": skill_id,
+                        "condition": cond,
+                        "required": False,
+                        "max_loops": 1,
+                    }
+                )
+                skill_items.append((edge.order, idx, norm_edge))
+                continue
+
+            # Drop dangling or invalid edges (e.g., deleted node IDs or skill->skill)
+
+        workflow_items.sort(key=lambda item: (item[0], item[1]))
+        skill_items.sort(key=lambda item: (item[0], item[1]))
+
+        normalized: List[TopologyEdge] = []
+        for step_num, (_, _, ed) in enumerate(workflow_items, start=1):
+            normalized.append(ed.model_copy(update={"order": step_num}))
+
+        skill_base_order = len(normalized)
+        for offset, (_, _, ed) in enumerate(skill_items, start=1):
+            normalized.append(ed.model_copy(update={"order": skill_base_order + offset}))
+
+        self.topology.edges = normalized
+        return self
+
+    def workflow_handoff_edges(self) -> List[TopologyEdge]:
+        """Return strictly Agent-to-Agent workflow handoff edges sorted by execution order."""
+        agent_ids = {self.orchestrator.id} | {sa.id for sa in self.subagents}
+        return sorted(
+            [e for e in self.topology.edges if e.source in agent_ids and e.target in agent_ids],
+            key=lambda e: e.order,
+        )
+
+    def skill_binding_edges(self) -> List[TopologyEdge]:
+        """Return strictly Agent-to-Skill assignment edges."""
+        agent_ids = {self.orchestrator.id} | {sa.id for sa in self.subagents}
+        skill_ids = {sk.id for sk in self.skills}
+        return [e for e in self.topology.edges if e.source in agent_ids and e.target in skill_ids]
+
+    def skills_for_agent(self, agent_id: str) -> List[SkillSpec]:
+        """Return SkillSpec objects explicitly bound to `agent_id` via topology skill edges."""
+        bound_ids = {e.target for e in self.skill_binding_edges() if e.source == agent_id}
+        return [sk for sk in self.skills if sk.id in bound_ids]
 
 
 class CompiledFile(BaseModel):

@@ -42,7 +42,7 @@ def generate_harness_eval_files(
             "blocked_commands": blueprint.orchestrator.permissions.blocked_commands,
         },
         "subagents": subagent_map,
-        "edges": [e.model_dump() for e in sorted(blueprint.topology.edges, key=lambda x: x.order)],
+        "edges": [e.model_dump() for e in blueprint.workflow_handoff_edges()],
         "hooks": [h.model_dump() for h in blueprint.hooks],
     }
 
