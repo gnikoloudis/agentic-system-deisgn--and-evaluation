@@ -190,13 +190,14 @@ def print_hook_stdout(is_antigravity: bool, hook_event: str, decision: str = "al
 def main() -> int:
     hook_event = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("HARNESS_HOOK_EVENT", "PreToolUse")
     config = load_json(CONFIG_PATH, {})
+    orch_id = config.get("orchestrator", {}).get("id") or config.get("entry_node") or "root_orchestrator"
     now_epoch = time.time()
     state = load_json(
         STATE_PATH,
         {
             "run_id": config.get("run_id", "unknown"),
-            "active_agent": "root_orchestrator",
-            "visited_nodes": ["root_orchestrator"],
+            "active_agent": orch_id,
+            "visited_nodes": [orch_id],
             "edge_counts": {},
             "tool_calls_count": 0,
             "violations_blocked": 0,
@@ -245,7 +246,7 @@ def main() -> int:
     elapsed_ms = round(max(120.0, min(45000.0, (now_epoch - last_epoch) * 1000.0)), 2)
     state["last_event_epoch"] = now_epoch
 
-    active_agent = state.get("active_agent", "root_orchestrator")
+    active_agent = state.get("active_agent", orch_id)
     subagents = config.get("subagents", {})
     enforce = config.get("enforcement_mode", "dual") in ("hook", "dual")
 
@@ -253,7 +254,7 @@ def main() -> int:
     delegated_subagent = detect_target_subagent(tool_name, tool_input, subagents)
     if hook_event == "PreToolUse" and delegated_subagent:
         edges = config.get("edges", [])
-        visited = set(state.get("visited_nodes", ["root_orchestrator"]))
+        visited = set(state.get("visited_nodes", [orch_id]))
         if enforce and edges and SUBAGENT_TOOL_PATTERNS.match(tool_name or ""):
             target_edges = [e for e in edges if e.get("target") == delegated_subagent]
             if target_edges:
@@ -355,7 +356,7 @@ def main() -> int:
     if hook_event == "PreToolUse" and enforce:
         agent_cfg = (
             config.get("orchestrator", {})
-            if active_agent == "root_orchestrator"
+            if active_agent == orch_id
             else subagents.get(active_agent, {})
         )
         if WRITE_TOOL_PATTERNS.match(tool_name) and not agent_cfg.get("allow_write", True):
@@ -438,7 +439,7 @@ def main() -> int:
 
     if hook_event == "SubagentStop":
         finished_agent = active_agent
-        state["active_agent"] = "root_orchestrator"
+        state["active_agent"] = orch_id
         save_json(STATE_PATH, state)
         emit_telemetry(
             config,
@@ -450,7 +451,7 @@ def main() -> int:
                 "agent_id": finished_agent,
                 "status": "ok",
                 "duration_ms": elapsed_ms,
-                "message": f"Subagent `{finished_agent}` returned control to `root_orchestrator`",
+                "message": f"Subagent `{finished_agent}` returned control to `{orch_id}`",
             },
         )
         return 0
@@ -481,7 +482,7 @@ def main() -> int:
                                 "timestamp": utc_now(),
                                 "source": "hook",
                                 "event_type": "TopologyViolation",
-                                "agent_id": "root_orchestrator",
+                                "agent_id": orch_id,
                                 "status": "blocked",
                                 "duration_ms": elapsed_ms,
                                 "message": msg,
@@ -497,7 +498,7 @@ def main() -> int:
                 "timestamp": utc_now(),
                 "source": "hook",
                 "event_type": "SessionStop",
-                "agent_id": "root_orchestrator",
+                "agent_id": orch_id,
                 "status": "ok",
                 "duration_ms": elapsed_ms,
                 "message": "Harness session completed",
@@ -508,10 +509,10 @@ def main() -> int:
 
     # Record standard PreToolUse / PostToolUse telemetry
     if hook_event in ("PreToolUse", "PostToolUse"):
-        # When an invoke_subagent / Task / Agent call completes in PostToolUse, return active_agent to root_orchestrator
+        # When an invoke_subagent / Task / Agent call completes in PostToolUse, return active_agent to orchestrator
         if hook_event == "PostToolUse" and SUBAGENT_TOOL_PATTERNS.match(tool_name or ""):
-            finished_agent = state.get("active_agent", "root_orchestrator")
-            state["active_agent"] = "root_orchestrator"
+            finished_agent = state.get("active_agent", orch_id)
+            state["active_agent"] = orch_id
             save_json(STATE_PATH, state)
             emit_telemetry(
                 config,

@@ -398,6 +398,54 @@ export const ArchitectureCanvas: React.FC<Props> = ({
     [blueprint, onUpdateBlueprint]
   );
 
+  const onNodesDelete = useCallback(
+    (deletedNodes: Node[]) => {
+      const deletedIds = new Set(
+        deletedNodes
+          .map((n) => n.id)
+          .filter((id) => id !== blueprint.orchestrator.id)
+      );
+      if (deletedIds.size === 0) return;
+
+      const nextLayoutNodes = { ...(blueprint.visual_layout?.nodes || {}) };
+      deletedIds.forEach((id) => {
+        delete nextLayoutNodes[id];
+      });
+
+      onUpdateBlueprint({
+        ...blueprint,
+        subagents: blueprint.subagents.filter((s) => !deletedIds.has(s.id)),
+        skills: blueprint.skills.filter((sk) => !deletedIds.has(sk.id)),
+        hooks: blueprint.hooks.filter((h) => !deletedIds.has(h.id)),
+        topology: {
+          ...blueprint.topology,
+          edges: blueprint.topology.edges.filter(
+            (e) => !deletedIds.has(e.source) && !deletedIds.has(e.target)
+          ),
+        },
+        visual_layout: { nodes: nextLayoutNodes },
+      });
+      onSelectNode(blueprint.orchestrator.id);
+    },
+    [blueprint, onUpdateBlueprint, onSelectNode]
+  );
+
+  const onEdgesDelete = useCallback(
+    (deletedEdges: Edge[]) => {
+      const deletedEdgeIds = new Set(deletedEdges.map((e) => e.id));
+      const remainingEdges = blueprint.topology.edges.filter((e) => !deletedEdgeIds.has(e.id));
+      if (remainingEdges.length === blueprint.topology.edges.length) return;
+      onUpdateBlueprint({
+        ...blueprint,
+        topology: {
+          ...blueprint.topology,
+          edges: remainingEdges,
+        },
+      });
+    },
+    [blueprint, onUpdateBlueprint]
+  );
+
   return (
     <div className="w-full h-full bg-slate-950 relative">
       <ReactFlow
@@ -406,6 +454,8 @@ export const ArchitectureCanvas: React.FC<Props> = ({
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onNodesDelete={onNodesDelete}
+        onEdgesDelete={onEdgesDelete}
         onNodeDragStop={onNodeDragStop}
         onConnect={onConnect}
         onNodeClick={(_, node) => onSelectNode(node.id)}

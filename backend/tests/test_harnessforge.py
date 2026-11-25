@@ -391,6 +391,61 @@ def test_custom_user_commands_compile_across_all_harnesses():
     assert ".agents/skills/build-ui-epic/SKILL.md" in {f.relative_path for f in ag.files}
 
 
+def test_issue_1_orphan_guardrail_removal_and_issue_2_agent_id_rename(tmp_path: Path):
+    """Verify Issue #1 (orphan guardrail hook removal) and Issue #2 (custom orchestrator/subagent ID rename & runtime enforcement)."""
+    found = get_blueprint("planner-coder-verifier")
+    assert found is not None
+    bp = found[0].model_copy(deep=True)
+
+    # Issue #2: Rename Root Orchestrator ID to `pm_meeting_orchestrator` and subagent `planner` -> `meeting_analyst`
+    old_orch = bp.orchestrator.id
+    bp.orchestrator.id = "pm_meeting_orchestrator"
+    bp.orchestrator.permissions.allow_write = False
+    bp.topology.enforcement_mode = "dual"
+    bp.topology.entry_node = "pm_meeting_orchestrator"
+    for sa in bp.subagents:
+        if sa.id == "planner":
+            sa.id = "meeting_analyst"
+    for edge in bp.topology.edges:
+        if edge.source == old_orch:
+            edge.source = "pm_meeting_orchestrator"
+        if edge.target == "planner":
+            edge.target = "meeting_analyst"
+        if edge.source == "planner":
+            edge.source = "meeting_analyst"
+
+    # Issue #1: Remove all guardrail hooks (simulating deleting an orphan hook after edges were deleted)
+    bp.hooks = []
+
+    # Compile across all 3 harnesses and verify renamed orchestrator & subagent IDs propagate cleanly
+    oc = compile_architecture(bp, harness="opencode", run_id="rename-test")
+    cc = compile_architecture(bp, harness="claude_code", run_id="rename-test")
+    ag = compile_architecture(bp, harness="antigravity", run_id="rename-test")
+
+    assert ".opencode/agent/pm_meeting_orchestrator.md" in {f.relative_path for f in oc.files}
+    assert ".opencode/agent/meeting_analyst.md" in {f.relative_path for f in oc.files}
+    assert ".claude/agents/meeting_analyst.md" in {f.relative_path for f in cc.files}
+    assert ".agents/agents/meeting_analyst.md" in {f.relative_path for f in ag.files}
+
+    # Verify hook_runner.py enforces allow_write=False under the renamed orchestrator ID `pm_meeting_orchestrator`
+    for cf in cc.files:
+        dest = tmp_path / cf.relative_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(cf.content, encoding="utf-8")
+
+    hook_script = tmp_path / ".harness-eval" / "hook_runner.py"
+    proc_write = subprocess.run(
+        [sys.executable, str(hook_script), "PreToolUse"],
+        cwd=str(tmp_path),
+        input=json.dumps({"tool_name": "Write", "tool_input": {"file_path": "notes.md"}}),
+        capture_output=True,
+        text=True,
+    )
+    assert proc_write.returncode == 2
+    assert "pm_meeting_orchestrator" in proc_write.stderr
+    assert "allow_write: false" in proc_write.stderr
+
+
 
 
 

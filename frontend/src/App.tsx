@@ -337,8 +337,70 @@ export default function App() {
     raw
       .trim()
       .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "");
+      .replace(/[^a-z0-9_-]+/g, "_")
+      .replace(/^[_-]+|[_-]+$/g, "");
+
+  const renameAgentId = (kind: "orchestrator" | "subagent", oldId: string, rawNewId: string) => {
+    if (!selectedBlueprint) return;
+    const candidate = sanitizeSlug(rawNewId);
+    if (!candidate || candidate === oldId) return;
+
+    const takenIds = new Set<string>([
+      ...(kind === "orchestrator" ? [] : [selectedBlueprint.orchestrator.id]),
+      ...selectedBlueprint.subagents
+        .filter((s) => !(kind === "subagent" && s.id === oldId))
+        .map((s) => s.id),
+      ...selectedBlueprint.skills.map((sk) => sk.id),
+      ...selectedBlueprint.hooks.map((h) => h.id),
+    ]);
+    if (takenIds.has(candidate)) {
+      notify(`Agent ID '${candidate}' is already in use by another node.`, "err");
+      return;
+    }
+
+    const nextLayoutNodes = { ...selectedBlueprint.visual_layout.nodes };
+    if (nextLayoutNodes[oldId]) {
+      nextLayoutNodes[candidate] = nextLayoutNodes[oldId];
+      delete nextLayoutNodes[oldId];
+    }
+
+    const updated: AgentArchitecture = {
+      ...selectedBlueprint,
+      orchestrator:
+        kind === "orchestrator"
+          ? { ...selectedBlueprint.orchestrator, id: candidate }
+          : selectedBlueprint.orchestrator,
+      subagents:
+        kind === "subagent"
+          ? selectedBlueprint.subagents.map((s) =>
+              s.id === oldId ? { ...s, id: candidate } : s
+            )
+          : selectedBlueprint.subagents,
+      hooks: selectedBlueprint.hooks.map((h) =>
+        h.target_agent === oldId ? { ...h, target_agent: candidate } : h
+      ),
+      commands: (selectedBlueprint.commands || []).map((c) =>
+        c.agent === oldId ? { ...c, agent: candidate } : c
+      ),
+      topology: {
+        ...selectedBlueprint.topology,
+        entry_node:
+          selectedBlueprint.topology.entry_node === oldId
+            ? candidate
+            : selectedBlueprint.topology.entry_node,
+        edges: selectedBlueprint.topology.edges.map((ed) => ({
+          ...ed,
+          source: ed.source === oldId ? candidate : ed.source,
+          target: ed.target === oldId ? candidate : ed.target,
+        })),
+      },
+      visual_layout: { nodes: nextLayoutNodes },
+    };
+
+    handleCanvasBlueprintChange(updated);
+    setSelectedNodeId(candidate);
+    notify(`Renamed ${kind} ID '${oldId}' → '${candidate}'`);
+  };
 
   const renameSkillId = (
     oldId: string,
@@ -1014,6 +1076,30 @@ export default function App() {
                         </span>
                       </div>
                       <div>
+                        <label className="block text-slate-400 mb-1">
+                          Agent ID / Slug <span className="text-[10px] text-slate-500">(Press Enter or blur to rename)</span>
+                        </label>
+                        <input
+                          key={`orch-id-${selectedBlueprint.orchestrator.id}`}
+                          defaultValue={selectedBlueprint.orchestrator.id}
+                          onBlur={(e) => {
+                            if (e.target.value.trim() && e.target.value.trim() !== selectedBlueprint.orchestrator.id) {
+                              renameAgentId("orchestrator", selectedBlueprint.orchestrator.id, e.target.value);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const val = (e.target as HTMLInputElement).value;
+                              if (val.trim() && val.trim() !== selectedBlueprint.orchestrator.id) {
+                                renameAgentId("orchestrator", selectedBlueprint.orchestrator.id, val);
+                              }
+                            }
+                          }}
+                          placeholder="e.g. pm_meeting_orchestrator"
+                          className="w-full bg-slate-950 border border-indigo-700/60 rounded-lg px-2.5 py-1.5 font-mono text-indigo-300"
+                        />
+                      </div>
+                      <div>
                         <label className="block text-slate-400 mb-1">Display Name</label>
                         <input
                           value={selectedBlueprint.orchestrator.name}
@@ -1215,12 +1301,36 @@ export default function App() {
                               },
                             };
                             handleCanvasBlueprintChange(updated);
-                            setSelectedNodeId("root_orchestrator");
+                            setSelectedNodeId(selectedBlueprint.orchestrator.id);
                           }}
-                          className="text-rose-400 hover:text-rose-300 flex items-center gap-1 text-[11px]"
+                          className="text-rose-400 hover:text-rose-300 flex items-center gap-1 text-[11px] cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" /> Remove
                         </button>
+                      </div>
+                      <div>
+                        <label className="block text-slate-400 mb-1">
+                          Subagent ID / Slug <span className="text-[10px] text-slate-500">(Press Enter or blur to rename)</span>
+                        </label>
+                        <input
+                          key={`sa-id-${selectedSubagent.id}`}
+                          defaultValue={selectedSubagent.id}
+                          onBlur={(e) => {
+                            if (e.target.value.trim() && e.target.value.trim() !== selectedSubagent.id) {
+                              renameAgentId("subagent", selectedSubagent.id, e.target.value);
+                            }
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const val = (e.target as HTMLInputElement).value;
+                              if (val.trim() && val.trim() !== selectedSubagent.id) {
+                                renameAgentId("subagent", selectedSubagent.id, val);
+                              }
+                            }
+                          }}
+                          placeholder="e.g. requirements_elicitor"
+                          className="w-full bg-slate-950 border border-cyan-700/60 rounded-lg px-2.5 py-1.5 font-mono text-cyan-300"
+                        />
                       </div>
                       <div>
                         <label className="block text-slate-400 mb-1">Subagent Name</label>
@@ -1451,7 +1561,7 @@ export default function App() {
                               skills: selectedBlueprint.skills.filter((sk) => sk.id !== selectedSkill.id),
                             };
                             handleCanvasBlueprintChange(updated);
-                            setSelectedNodeId("root_orchestrator");
+                            setSelectedNodeId(selectedBlueprint.orchestrator.id);
                           }}
                           className="text-rose-400 hover:text-rose-300 flex items-center gap-1 text-[11px]"
                         >
@@ -1586,8 +1696,83 @@ export default function App() {
 
                   {selectedHook && (
                     <div className="space-y-3">
-                      <div className="text-xs font-bold uppercase tracking-wider text-amber-400">
-                        Lifecycle Guardrail Hook: {selectedHook.id}
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-amber-400">
+                          Lifecycle Guardrail Hook: {selectedHook.id}
+                        </span>
+                        <button
+                          onClick={() => {
+                            const nextLayoutNodes = { ...selectedBlueprint.visual_layout.nodes };
+                            delete nextLayoutNodes[selectedHook.id];
+                            const updated: AgentArchitecture = {
+                              ...selectedBlueprint,
+                              hooks: selectedBlueprint.hooks.filter((h) => h.id !== selectedHook.id),
+                              topology: {
+                                ...selectedBlueprint.topology,
+                                edges: selectedBlueprint.topology.edges.filter(
+                                  (e) => e.source !== selectedHook.id && e.target !== selectedHook.id
+                                ),
+                              },
+                              visual_layout: { nodes: nextLayoutNodes },
+                            };
+                            handleCanvasBlueprintChange(updated);
+                            setSelectedNodeId(selectedBlueprint.orchestrator.id);
+                            notify(`Removed guardrail hook '${selectedHook.id}'`);
+                          }}
+                          className="text-rose-400 hover:text-rose-300 flex items-center gap-1 text-[11px] cursor-pointer"
+                          title="Delete this guardrail hook node (works even when orphan or disconnected)"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Remove
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-slate-400 mb-1">Target Agent</label>
+                          <select
+                            value={selectedHook.target_agent}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                hooks: selectedBlueprint.hooks.map((h) =>
+                                  h.id === selectedHook.id ? { ...h, target_agent: e.target.value } : h
+                                ),
+                              })
+                            }
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px]"
+                          >
+                            <option value="*">* (All Agents)</option>
+                            <option value={selectedBlueprint.orchestrator.id}>
+                              {selectedBlueprint.orchestrator.id} (Orchestrator)
+                            </option>
+                            {selectedBlueprint.subagents.map((sa) => (
+                              <option key={sa.id} value={sa.id}>
+                                {sa.id} ({sa.name})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="block text-slate-400 mb-1">Action</label>
+                          <select
+                            value={selectedHook.action}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                hooks: selectedBlueprint.hooks.map((h) =>
+                                  h.id === selectedHook.id
+                                    ? { ...h, action: e.target.value as typeof selectedHook.action }
+                                    : h
+                                ),
+                              })
+                            }
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5"
+                          >
+                            <option value="block">block</option>
+                            <option value="warn">warn</option>
+                            <option value="allow">allow</option>
+                            <option value="run_command">run_command</option>
+                          </select>
+                        </div>
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
