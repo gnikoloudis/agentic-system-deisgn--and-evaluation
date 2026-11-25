@@ -6,5 +6,15 @@
   "python.terminal.activateEnvironment": true,
   "pytest.args": [
     "backend/tests"
-  ]
+  ],
+  "git.autoRepositoryDetection": "openEditors",
+  "git.ignoredRepositories": [
+    ".harness-workspaces"
+  ],
+  "files.watcherExclude": {
+    "**/.harness-workspaces/**": true
+  },
+  "search.exclude": {
+    "**/.harness-workspaces": true
+  }
 }
