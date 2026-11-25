@@ -153,15 +153,61 @@ Follow these 6 simple steps in the Web Studio (`http://localhost:5173`) to compl
   - **Field 2 — External Reference Documentation Folder (Optional)**: A separate folder containing customer requirements, workshops, or specs that your agents need read access to without copying them into the code repo.
   - **Field 3 — Evaluation Benchmark Task *(Verifiers used when clicking "2. Evaluate Project")***:
     - **What it is**: The **grading checklist / automated verifier suite** that HarnessForge runs against your Target Project Workspace Folder when you click **`2. Evaluate Project`**.
-    - **Why choosing the right task matters**: Every Benchmark Task defines its own **Layer 1 Deterministic Verifiers** (which account for **45%** of your total score). Always match the selected task to the work your agents actually performed in that folder:
+    - **Why choosing the right option matters**: Every option in this dropdown defines its own **Layer 1 Deterministic Verifiers** (which account for **45%** of your total Composite Score). Always match the selected option to the work your agents actually performed in that folder.
 
-      | Project Type / Workflow | Recommended Evaluation Benchmark Task | What Layer 1 Verifies on Disk |
-      | :--- | :--- | :--- |
-      | **Technical Business Analyst (FocusFlow)** | `FocusFlow To-Do Application — Full Technical BA Discovery & Delivery Pack` (`tba-focusflow-todo-app`) | Checks `EPICS_AND_USER_STORIES.md` (Connextra stories, 3 Cs Dev/QA, BDD `Given/When/Then`, `TC-xxx`, INVEST, DoR/DoD, RTM) & `WORKFLOWS_AND_DELIVERY_DOCS.md` (valid Mermaid `flowchart`/`sequenceDiagram`/`stateDiagram-v2` diagrams) + FocusFlow domain rules. |
-      | **Technical Business Analyst (Chargeback)** | `TBA Chargeback Dispute System` (`tba-chargeback-dispute-system`) | Checks Chargeback BA deliverables (`EPICS_AND_USER_STORIES.md` & `WORKFLOWS_AND_DELIVERY_DOCS.md`) and domain thresholds. |
-      | **Business Consulting** | `Consulting SaaS Turnaround` (`consulting-saas-turnaround`) | Checks `EXECUTIVE_MEMO.md` structure, unit economics, and 90-day roadmap. |
-      | **Python Coding Benchmarks** | `Fix Token Expiration Bug` / `Sliding Window Rate Limiter` / `Refactor Order Pricing` | Runs `pytest -v` against the matching test file and audits `git diff` size/targets. |
-      | **Your Own Code / UI Project** | Create a custom task in **Tab 2 (`2. Benchmark Tasks`)** | Runs your own commands (e.g., `npm run build`, `npx tsc -b`, `npx vitest run`, `pytest -v`, `file_exists`, regex checks). |
+    #### Detailed Guide to Every Dropdown Option
+
+    1. **`FocusFlow To-Do Application — Full TBA Delivery Pack (From 5 Workshops & Customer Intake) (4 verifiers)`** (`tba-focusflow-todo-app`)
+       - **Best for**: Evaluating a **Technical Business Analyst (TBA)** architecture on the FocusFlow To-Do App documentation (`test_application_docs/` or your own copy of `Documentation/`).
+       - **Python required in target folder?**: **No** (100% no-code document verifiers).
+       - **Exact Verifiers Executed**:
+         - `user_story_invest_check` *(weight `2.5`, required)* — Audits `EPICS_AND_USER_STORIES.md` for `>= 2` Connextra stories (`As a... I want... So that...`), 3 Cs Card (`EPIC-xx` & `US-xxx`), Conversation (Dev rules), Confirmation (`>= 2` BDD `Given/When/Then` scenarios & `TC-xxx` IDs), Bill Wake's INVEST checklist, and DoR/DoD.
+         - `markdown_sections_present` *(weight `1.5`, required)* — Confirms all 8 sections (`Epics`, `User Stories`, `Conversation`, `Confirmation`, `INVEST`, `Definition of Ready`, `Definition of Done`, `Traceability Matrix`) exist in `EPICS_AND_USER_STORIES.md`.
+         - `mermaid_diagram_valid` *(weight `1.5`, required)* — Confirms `WORKFLOWS_AND_DELIVERY_DOCS.md` contains valid fenced ```` ```mermaid ```` diagrams (`flowchart`, `sequenceDiagram`, `stateDiagram-v2`).
+         - `file_contains_regex` *(weight `1.5`, required)* — Confirms FocusFlow workshop domain rules (`120`, `BLOCKED`, `30`) are covered in `EPICS_AND_USER_STORIES.md`.
+
+    2. **`Technical BA Delivery Pack: FinTech Card Chargeback & Dispute Resolution Portal (4 verifiers)`** (`tba-chargeback-dispute-system`)
+       - **Best for**: Evaluating a **Technical Business Analyst (TBA)** architecture on the built-in FinTech Chargeback sample repo (`tasks/sample_repos/tba_stakeholder_intake`).
+       - **Python required in target folder?**: **Yes** (runs `pytest -v` on `test_ba_deliverables.py` in addition to the 3 no-code BA verifiers).
+       - **Exact Verifiers Executed**:
+         - `user_story_invest_check` *(weight `2.5`, required)* — Audits `EPICS_AND_USER_STORIES.md` for Connextra, 3 Cs, BDD, INVEST, and DoR/DoD.
+         - `markdown_sections_present` *(weight `1.5`, required)* — Checks the 8 required BA & Traceability Matrix sections.
+         - `mermaid_diagram_valid` *(weight `1.5`, required)* — Validates Mermaid process/sequence/state diagrams in `WORKFLOWS_AND_DELIVERY_DOCS.md`.
+         - `pytest_pass` *(weight `1.5`, required)* — Runs `pytest -v` to check Chargeback-specific regulatory thresholds (60-day window, \$25 auto-refund, \$500 approval, 10MB evidence limit).
+
+    3. **`B2B SaaS Growth & Margin Turnaround Strategy Case (AcmeCloud) (3 verifiers)`** (`consulting-saas-turnaround`)
+       - **Best for**: Evaluating a **Business Consulting** architecture (`business-consulting-firm`) analyzing `client_metrics.json` and authoring `EXECUTIVE_MEMO.md`.
+       - **Python required in target folder?**: **Yes** (runs `pytest -v` on `test_consulting_memo.py`).
+       - **Exact Verifiers Executed**:
+         - `file_exists` *(weight `1.0`, required)* — Confirms `EXECUTIVE_MEMO.md` was created.
+         - `pytest_pass` *(weight `2.0`, required)* — Runs quantitative fact-check & MECE structure tests (`pytest -v`).
+         - `file_contains_regex` *(weight `1.0`, required)* — Confirms key unit economics (`38%` SMB churn / `118%` Enterprise NDR) are cited.
+
+    4. **`Fix Token Expiration Off-by-One & Scope Validation Bug (3 verifiers)`** (`bugfix-auth-token`)
+       - **Best for**: Quick **Python Bugfix** benchmark on `tasks/sample_repos/auth_service` (`token_validator.py`).
+       - **Python required in target folder?**: **Yes** (`pytest -v`).
+       - **Exact Verifiers Executed**:
+         - `pytest_pass` *(weight `2.0`, required)* — Runs `pytest -v` on `test_token_validator.py`.
+         - `git_diff_contains` *(weight `1.0`, required)* — Confirms `token_validator.py` was modified in `git diff`.
+         - `git_diff_max_lines` *(weight `0.5`, optional)* — Checks that the fix stays within `60` changed lines.
+
+    5. **`Implement Sliding Window Rate Limiter with Burst Allowance (2 verifiers)`** (`feature-rate-limiter`)
+       - **Best for**: Medium **Python Feature Implementation** benchmark on `tasks/sample_repos/rate_limiter` (`limiter.py`).
+       - **Python required in target folder?**: **Yes** (`pytest -v`).
+       - **Exact Verifiers Executed**:
+         - `pytest_pass` *(weight `2.0`, required)* — Runs `pytest -v` on `test_limiter.py`.
+         - `file_not_contains_regex` *(weight `1.0`, required)* — Confirms no `NotImplementedError` placeholders remain in `limiter.py`.
+
+    6. **`Refactor Order Pricing Engine & Fix Tiered Discount Rounding (2 verifiers)`** (`refactor-order-pricing`)
+       - **Best for**: Hard **Python Refactoring** benchmark on `tasks/sample_repos/order_pricing` (`pricing.py`).
+       - **Python required in target folder?**: **Yes** (`pytest -v`).
+       - **Exact Verifiers Executed**:
+         - `pytest_pass` *(weight `2.0`, required)* — Runs `pytest -v` on `test_pricing.py`.
+         - `file_exists` *(weight `0.5`, required)* — Confirms `pricing.py` exists and was preserved.
+
+    7. **Evaluating Your Own Custom Code / React UI / Domain Project?**
+       - None of the 6 built-in tasks above will match your custom filenames or test commands (e.g., `npm run build`, `npx tsc -b`, `npx vitest run`).
+       - Instead, open **Tab 2 (`2. Benchmark Tasks`)**, duplicate any task YAML with a new `id` (e.g., `my-react-ui-app`), define your own verifiers (`command_exit_code`, `file_exists`, `file_contains_regex`, etc.), and click **`Save Task YAML`**. Your new task immediately appears in this dropdown!
 
     - **What happens step-by-step when you click `2. Evaluate Project`**:
       1. **Ingests Session Telemetry**: Reads `.harness-eval/state.json` and `.harness-eval/telemetry.jsonl` from your Target Project Workspace Folder (capturing every tool call, subagent handoff, duration, estimated tokens, and any blocked guardrail violations).
