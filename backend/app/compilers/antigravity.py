@@ -62,7 +62,7 @@ class AntigravityAdapter(HarnessAdapter):
                     f"  - `Name`: `\"{sa.id}\"`",
                     f"  - `Description`: {json.dumps(sa.role)}",
                     f"  - `EnableWriteTools`: `{str(sa.permissions.allow_write).lower()}`",
-                    f"  - `EnableMCPTools`: `false`",
+                    f"  - `EnableMCPTools`: `{str(len(sa.mcp_servers) > 0).lower()}`" + (f" (Assigned MCP Servers: {', '.join(f'`{m}`' for m in sa.mcp_servers)})" if sa.mcp_servers else ""),
                     f"- **`invoke_subagent` Model**: `\"{agy_enum}\"` (Configured Model: `{resolved_m}`)",
                     f"- **`SystemPrompt`**:",
                     "```markdown",
@@ -103,16 +103,23 @@ class AntigravityAdapter(HarnessAdapter):
         for sa in blueprint.subagents:
             model_tier = self.resolve_agent_model(sa)
             sa_desc = json.dumps(f"{sa.name} — {sa.role}")
+            enable_mcp = len(sa.mcp_servers) > 0
+            mcp_note = (
+                f"\n## Assigned MCP Servers\nYou are authorized to use MCP tools from: {', '.join(f'`{m}`' for m in sa.mcp_servers)}.\n"
+                if sa.mcp_servers
+                else ""
+            )
             subagent_md = (
                 "---\n"
                 f"name: {sa.id}\n"
                 f"description: {sa_desc}\n"
                 f"model: {model_tier}\n"
                 f"enable_write_tools: {str(sa.permissions.allow_write).lower()}\n"
-                "enable_mcp_tools: false\n"
+                f"enable_mcp_tools: {str(enable_mcp).lower()}\n"
                 "---\n\n"
                 f"# {sa.name} (`{sa.id}`)\n\n"
                 f"{sa.system_prompt.strip()}\n"
+                f"{mcp_note}"
             )
             files.append(
                 CompiledFile(
@@ -286,18 +293,22 @@ class AntigravityAdapter(HarnessAdapter):
             )
         )
 
-        # 5. MCP Servers -> .agents/mcp_config.json and .agent/mcp.json
+        # 5. MCP Servers -> .agents/mcp_config.json and .agent/mcp.json (supports stdio, sse, http)
         if blueprint.mcp_servers:
-            mcp_payload = {
-                "mcpServers": {
-                    srv.id: {
-                        "command": srv.command,
+            mcp_servers_map: Dict[str, Any] = {}
+            for srv in blueprint.mcp_servers:
+                if srv.transport in ("sse", "http") and srv.url:
+                    entry: Dict[str, Any] = {"serverUrl": srv.url}
+                    if srv.env:
+                        entry["env"] = srv.env
+                    mcp_servers_map[srv.id] = entry
+                else:
+                    mcp_servers_map[srv.id] = {
+                        "command": srv.command or "npx",
                         "args": srv.args,
                         "env": srv.env,
                     }
-                    for srv in blueprint.mcp_servers
-                }
-            }
+            mcp_payload = {"mcpServers": mcp_servers_map}
             files.append(
                 CompiledFile(
                     relative_path=".agents/mcp_config.json",

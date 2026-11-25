@@ -625,8 +625,146 @@ export default function App() {
   const selectedSubagent = selectedBlueprint?.subagents.find((s) => s.id === selectedNodeId);
   const selectedSkill = selectedBlueprint?.skills.find((sk) => sk.id === selectedNodeId);
   const selectedHook = selectedBlueprint?.hooks.find((h) => h.id === selectedNodeId);
+  const selectedMcpServer = (selectedBlueprint?.mcp_servers || []).find(
+    (m) => m.id === selectedNodeId
+  );
   const isOrchestratorSelected =
     !selectedNodeId || selectedNodeId === selectedBlueprint?.orchestrator.id;
+
+  const handleAddMcpServer = (assignToAgentId?: string) => {
+    if (!selectedBlueprint) return;
+    const existing = selectedBlueprint.mcp_servers || [];
+    let nextIdx = existing.length + 1;
+    const existingIds = new Set(existing.map((m) => m.id));
+    while (existingIds.has(`mcp_server_${nextIdx}`)) {
+      nextIdx += 1;
+    }
+    const newId = `mcp_server_${nextIdx}`;
+    const newServer = {
+      id: newId,
+      description: "Custom MCP server exposing external tools or data",
+      transport: "stdio" as const,
+      command: "npx",
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."],
+      url: null,
+      env: {},
+    };
+    const updated: AgentArchitecture = {
+      ...selectedBlueprint,
+      mcp_servers: [...existing, newServer],
+      orchestrator:
+        assignToAgentId === selectedBlueprint.orchestrator.id
+          ? {
+              ...selectedBlueprint.orchestrator,
+              mcp_servers: [...(selectedBlueprint.orchestrator.mcp_servers || []), newId],
+            }
+          : selectedBlueprint.orchestrator,
+      subagents: selectedBlueprint.subagents.map((sa) =>
+        assignToAgentId === sa.id
+          ? { ...sa, mcp_servers: [...(sa.mcp_servers || []), newId] }
+          : sa
+      ),
+      visual_layout: {
+        nodes: {
+          ...selectedBlueprint.visual_layout.nodes,
+          [newId]: { x: 680, y: 300 + existing.length * 130 },
+        },
+      },
+    };
+    handleCanvasBlueprintChange(updated);
+    setSelectedNodeId(newId);
+    notify(
+      assignToAgentId
+        ? `Added MCP server '${newId}' and assigned it to '${assignToAgentId}'`
+        : `Added MCP server '${newId}'`
+    );
+  };
+
+  const toggleAgentMcpServer = (
+    kind: "orchestrator" | "subagent",
+    agentId: string,
+    mcpId: string
+  ) => {
+    if (!selectedBlueprint) return;
+    if (kind === "orchestrator") {
+      const curr = selectedBlueprint.orchestrator.mcp_servers || [];
+      const next = curr.includes(mcpId)
+        ? curr.filter((m) => m !== mcpId)
+        : [...curr, mcpId];
+      handleCanvasBlueprintChange({
+        ...selectedBlueprint,
+        orchestrator: { ...selectedBlueprint.orchestrator, mcp_servers: next },
+      });
+    } else {
+      handleCanvasBlueprintChange({
+        ...selectedBlueprint,
+        subagents: selectedBlueprint.subagents.map((sa) => {
+          if (sa.id !== agentId) return sa;
+          const curr = sa.mcp_servers || [];
+          const next = curr.includes(mcpId)
+            ? curr.filter((m) => m !== mcpId)
+            : [...curr, mcpId];
+          return { ...sa, mcp_servers: next };
+        }),
+      });
+    }
+  };
+
+  const renameMcpServerId = (oldId: string, rawNewId: string) => {
+    if (!selectedBlueprint) return;
+    const candidate = sanitizeSlug(rawNewId);
+    if (!candidate || candidate === oldId) return;
+    const existing = selectedBlueprint.mcp_servers || [];
+    if (existing.some((m) => m.id === candidate)) {
+      notify(`MCP server ID '${candidate}' already exists.`, "err");
+      return;
+    }
+    const nextLayout = { ...selectedBlueprint.visual_layout.nodes };
+    if (nextLayout[oldId]) {
+      nextLayout[candidate] = nextLayout[oldId];
+      delete nextLayout[oldId];
+    }
+    handleCanvasBlueprintChange({
+      ...selectedBlueprint,
+      mcp_servers: existing.map((m) => (m.id === oldId ? { ...m, id: candidate } : m)),
+      orchestrator: {
+        ...selectedBlueprint.orchestrator,
+        mcp_servers: (selectedBlueprint.orchestrator.mcp_servers || []).map((m) =>
+          m === oldId ? candidate : m
+        ),
+      },
+      subagents: selectedBlueprint.subagents.map((sa) => ({
+        ...sa,
+        mcp_servers: (sa.mcp_servers || []).map((m) => (m === oldId ? candidate : m)),
+      })),
+      visual_layout: { nodes: nextLayout },
+    });
+    setSelectedNodeId(candidate);
+    notify(`Renamed MCP server '${oldId}' → '${candidate}'`);
+  };
+
+  const deleteMcpServer = (mcpId: string) => {
+    if (!selectedBlueprint) return;
+    const nextLayout = { ...selectedBlueprint.visual_layout.nodes };
+    delete nextLayout[mcpId];
+    handleCanvasBlueprintChange({
+      ...selectedBlueprint,
+      mcp_servers: (selectedBlueprint.mcp_servers || []).filter((m) => m.id !== mcpId),
+      orchestrator: {
+        ...selectedBlueprint.orchestrator,
+        mcp_servers: (selectedBlueprint.orchestrator.mcp_servers || []).filter((m) => m !== mcpId),
+      },
+      subagents: selectedBlueprint.subagents.map((sa) => ({
+        ...sa,
+        mcp_servers: (sa.mcp_servers || []).filter((m) => m !== mcpId),
+      })),
+      visual_layout: { nodes: nextLayout },
+    });
+    if (selectedNodeId === mcpId) {
+      setSelectedNodeId(selectedBlueprint.orchestrator.id);
+    }
+    notify(`Deleted MCP server '${mcpId}'`);
+  };
 
   return (
     <div className="min-h-screen h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
@@ -906,6 +1044,13 @@ export default function App() {
                   Add Lifecycle Guardrail Hook
                 </button>
                 <button
+                  onClick={() => handleAddMcpServer()}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-950/60 hover:bg-purple-900/60 border border-purple-700/50 text-purple-200 text-xs font-medium cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add MCP Server Node
+                </button>
+                <button
                   onClick={handleDuplicateBlueprint}
                   className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium cursor-pointer"
                 >
@@ -1031,6 +1176,7 @@ export default function App() {
                   <span className="inline-block w-2.5 h-2.5 rounded-full bg-cyan-500 ml-2" /> Subagent
                   <span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500 ml-2" /> Skill
                   <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-500 ml-2" /> Hook
+                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-purple-500 ml-2" /> MCP
                 </div>
               </div>
               <div className="flex-1">
@@ -1286,6 +1432,61 @@ export default function App() {
                           }
                           className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] leading-relaxed"
                         />
+                      </div>
+
+                      {/* Assigned MCP Servers (CRUD & Assign from Root Orchestrator) */}
+                      <div className="p-2.5 rounded-xl bg-slate-950 border border-purple-800/50 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300">
+                            Connected MCP Servers ({(selectedBlueprint.orchestrator.mcp_servers || []).length}/{(selectedBlueprint.mcp_servers || []).length})
+                          </span>
+                          <button
+                            onClick={() => handleAddMcpServer(selectedBlueprint.orchestrator.id)}
+                            className="px-2 py-0.5 rounded bg-purple-700 hover:bg-purple-600 text-white text-[10px] font-semibold cursor-pointer"
+                          >
+                            + Add &amp; Assign MCP
+                          </button>
+                        </div>
+                        {(selectedBlueprint.mcp_servers || []).length === 0 ? (
+                          <div className="text-[10px] text-slate-400">
+                            No MCP servers in this blueprint yet. Click <strong>+ Add &amp; Assign MCP</strong> to connect one.
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            {(selectedBlueprint.mcp_servers || []).map((srv) => {
+                              const assigned = (selectedBlueprint.orchestrator.mcp_servers || []).includes(srv.id);
+                              return (
+                                <div key={srv.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-slate-900 border border-slate-800">
+                                  <label className="flex items-center gap-2 cursor-pointer min-w-0 flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={assigned}
+                                      onChange={() => toggleAgentMcpServer("orchestrator", selectedBlueprint.orchestrator.id, srv.id)}
+                                    />
+                                    <span className="font-mono text-[11px] text-purple-300 truncate">{srv.id}</span>
+                                    <span className="text-[9px] text-slate-400 uppercase">{srv.transport}</span>
+                                  </label>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                      onClick={() => setSelectedNodeId(srv.id)}
+                                      className="p-0.5 text-slate-400 hover:text-purple-300 cursor-pointer"
+                                      title={`Edit MCP server '${srv.id}'`}
+                                    >
+                                      <Pencil className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      onClick={() => deleteMcpServer(srv.id)}
+                                      className="p-0.5 text-slate-500 hover:text-rose-400 cursor-pointer"
+                                      title={`Delete MCP server '${srv.id}'`}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1555,6 +1756,61 @@ export default function App() {
                           }
                           className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] leading-relaxed"
                         />
+                      </div>
+
+                      {/* Assigned MCP Servers (CRUD & Assign from Subagent) */}
+                      <div className="p-2.5 rounded-xl bg-slate-950 border border-purple-800/50 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-purple-300">
+                            Assigned MCP Servers ({(selectedSubagent.mcp_servers || []).length}/{(selectedBlueprint.mcp_servers || []).length})
+                          </span>
+                          <button
+                            onClick={() => handleAddMcpServer(selectedSubagent.id)}
+                            className="px-2 py-0.5 rounded bg-purple-700 hover:bg-purple-600 text-white text-[10px] font-semibold cursor-pointer"
+                          >
+                            + Add &amp; Assign MCP
+                          </button>
+                        </div>
+                        {(selectedBlueprint.mcp_servers || []).length === 0 ? (
+                          <div className="text-[10px] text-slate-400">
+                            No MCP servers configured yet. Click <strong>+ Add &amp; Assign MCP</strong> to add one for this subagent.
+                          </div>
+                        ) : (
+                          <div className="space-y-1">
+                            {(selectedBlueprint.mcp_servers || []).map((srv) => {
+                              const assigned = (selectedSubagent.mcp_servers || []).includes(srv.id);
+                              return (
+                                <div key={srv.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded bg-slate-900 border border-slate-800">
+                                  <label className="flex items-center gap-2 cursor-pointer min-w-0 flex-1">
+                                    <input
+                                      type="checkbox"
+                                      checked={assigned}
+                                      onChange={() => toggleAgentMcpServer("subagent", selectedSubagent.id, srv.id)}
+                                    />
+                                    <span className="font-mono text-[11px] text-purple-300 truncate">{srv.id}</span>
+                                    <span className="text-[9px] text-slate-400 uppercase">{srv.transport}</span>
+                                  </label>
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    <button
+                                      onClick={() => setSelectedNodeId(srv.id)}
+                                      className="p-0.5 text-slate-400 hover:text-purple-300 cursor-pointer"
+                                      title={`Edit MCP server '${srv.id}'`}
+                                    >
+                                      <Pencil className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      onClick={() => deleteMcpServer(srv.id)}
+                                      className="p-0.5 text-slate-500 hover:text-rose-400 cursor-pointer"
+                                      title={`Delete MCP server '${srv.id}'`}
+                                    >
+                                      <Trash2 className="w-3 h-3" />
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1839,6 +2095,206 @@ export default function App() {
                           }
                           className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2"
                         />
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedMcpServer && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-purple-400">
+                          MCP Server: {selectedMcpServer.id}
+                        </span>
+                        <button
+                          onClick={() => deleteMcpServer(selectedMcpServer.id)}
+                          className="text-rose-400 hover:text-rose-300 flex items-center gap-1 text-[11px] cursor-pointer"
+                          title="Delete this MCP server and unassign from all agents"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" /> Remove
+                        </button>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-slate-400 mb-1">
+                            MCP Server ID <span className="text-[10px] text-slate-500">(Enter/blur)</span>
+                          </label>
+                          <input
+                            key={`mcp-id-${selectedMcpServer.id}`}
+                            defaultValue={selectedMcpServer.id}
+                            onBlur={(e) => {
+                              if (e.target.value.trim() && e.target.value.trim() !== selectedMcpServer.id) {
+                                renameMcpServerId(selectedMcpServer.id, e.target.value);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                const val = (e.target as HTMLInputElement).value;
+                                if (val.trim() && val.trim() !== selectedMcpServer.id) {
+                                  renameMcpServerId(selectedMcpServer.id, val);
+                                }
+                              }
+                            }}
+                            className="w-full bg-slate-950 border border-purple-700/60 rounded-lg px-2.5 py-1.5 font-mono text-purple-300"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-slate-400 mb-1">Transport</label>
+                          <select
+                            value={selectedMcpServer.transport}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                mcp_servers: (selectedBlueprint.mcp_servers || []).map((m) =>
+                                  m.id === selectedMcpServer.id
+                                    ? { ...m, transport: e.target.value as "stdio" | "sse" | "http" }
+                                    : m
+                                ),
+                              })
+                            }
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 font-mono"
+                          >
+                            <option value="stdio">stdio (local process)</option>
+                            <option value="http">http (remote streamable HTTP)</option>
+                            <option value="sse">sse (remote SSE endpoint)</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-slate-400 mb-1">Description (Tools &amp; Purpose)</label>
+                        <input
+                          value={selectedMcpServer.description || ""}
+                          onChange={(e) =>
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              mcp_servers: (selectedBlueprint.mcp_servers || []).map((m) =>
+                                m.id === selectedMcpServer.id ? { ...m, description: e.target.value } : m
+                              ),
+                            })
+                          }
+                          placeholder="e.g. Queries PostgreSQL schemas and read-only analytics"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                        />
+                      </div>
+
+                      {selectedMcpServer.transport === "stdio" ? (
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-slate-400 mb-1">Command</label>
+                            <input
+                              value={selectedMcpServer.command || ""}
+                              onChange={(e) =>
+                                handleCanvasBlueprintChange({
+                                  ...selectedBlueprint,
+                                  mcp_servers: (selectedBlueprint.mcp_servers || []).map((m) =>
+                                    m.id === selectedMcpServer.id ? { ...m, command: e.target.value } : m
+                                  ),
+                                })
+                              }
+                              placeholder="npx"
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 font-mono"
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="block text-slate-400 mb-1">Args (space-separated)</label>
+                            <input
+                              value={(selectedMcpServer.args || []).join(" ")}
+                              onChange={(e) =>
+                                handleCanvasBlueprintChange({
+                                  ...selectedBlueprint,
+                                  mcp_servers: (selectedBlueprint.mcp_servers || []).map((m) =>
+                                    m.id === selectedMcpServer.id
+                                      ? {
+                                          ...m,
+                                          args: e.target.value.split(/\s+/).filter(Boolean),
+                                        }
+                                      : m
+                                  ),
+                                })
+                              }
+                              placeholder="-y @modelcontextprotocol/server-github"
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 font-mono"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-slate-400 mb-1">Remote MCP Endpoint URL</label>
+                          <input
+                            value={selectedMcpServer.url || ""}
+                            onChange={(e) =>
+                              handleCanvasBlueprintChange({
+                                ...selectedBlueprint,
+                                mcp_servers: (selectedBlueprint.mcp_servers || []).map((m) =>
+                                  m.id === selectedMcpServer.id ? { ...m, url: e.target.value } : m
+                                ),
+                              })
+                            }
+                            placeholder="https://mcp.internal.company.com/sse"
+                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-purple-200"
+                          />
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-slate-400 mb-1">
+                          Environment Variables (one per line: <code>KEY=VALUE</code>)
+                        </label>
+                        <textarea
+                          rows={3}
+                          key={`mcp-env-${selectedMcpServer.id}`}
+                          defaultValue={Object.entries(selectedMcpServer.env || {})
+                            .map(([k, v]) => `${k}=${v}`)
+                            .join("\n")}
+                          onBlur={(e) => {
+                            const nextEnv: Record<string, string> = {};
+                            e.target.value.split("\n").forEach((line) => {
+                              const idx = line.indexOf("=");
+                              if (idx > 0) {
+                                const k = line.slice(0, idx).trim();
+                                const v = line.slice(idx + 1).trim();
+                                if (k) nextEnv[k] = v;
+                              }
+                            });
+                            handleCanvasBlueprintChange({
+                              ...selectedBlueprint,
+                              mcp_servers: (selectedBlueprint.mcp_servers || []).map((m) =>
+                                m.id === selectedMcpServer.id ? { ...m, env: nextEnv } : m
+                              ),
+                            });
+                          }}
+                          placeholder={"GITHUB_PERSONAL_ACCESS_TOKEN=${GITHUB_TOKEN}\nPOSTGRES_URL=${DATABASE_URL}"}
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 font-mono text-[11px]"
+                        />
+                      </div>
+
+                      <div className="p-2.5 rounded-xl bg-slate-950 border border-purple-800/50 space-y-1.5">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-purple-300">
+                          Assigned Agents &amp; Subagents
+                        </div>
+                        <label className="flex items-center gap-2 cursor-pointer text-[11px]">
+                          <input
+                            type="checkbox"
+                            checked={(selectedBlueprint.orchestrator.mcp_servers || []).includes(selectedMcpServer.id)}
+                            onChange={() =>
+                              toggleAgentMcpServer("orchestrator", selectedBlueprint.orchestrator.id, selectedMcpServer.id)
+                            }
+                          />
+                          <span className="font-mono text-indigo-300">{selectedBlueprint.orchestrator.id}</span>
+                          <span className="text-slate-400">({selectedBlueprint.orchestrator.name})</span>
+                        </label>
+                        {selectedBlueprint.subagents.map((sa) => (
+                          <label key={sa.id} className="flex items-center gap-2 cursor-pointer text-[11px]">
+                            <input
+                              type="checkbox"
+                              checked={(sa.mcp_servers || []).includes(selectedMcpServer.id)}
+                              onChange={() => toggleAgentMcpServer("subagent", sa.id, selectedMcpServer.id)}
+                            />
+                            <span className="font-mono text-cyan-300">{sa.id}</span>
+                            <span className="text-slate-400">({sa.name})</span>
+                          </label>
+                        ))}
                       </div>
                     </div>
                   )}

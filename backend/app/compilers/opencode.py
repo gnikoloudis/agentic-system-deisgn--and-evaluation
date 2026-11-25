@@ -43,10 +43,20 @@ class OpenCodeAdapter(HarnessAdapter):
             )
         )
 
-        # 2. Primary Orchestrator & Subagents -> .opencode/agent/<id>.md AND .opencode/agents/<id>.md
+        # 2. Primary Orchestrator & Subagents -> .opencode/agent/<id>.md
+        all_mcp_ids = [srv.id for srv in blueprint.mcp_servers]
+
+        def _build_agent_mcp_tools(assigned: List[str]) -> Dict[str, bool]:
+            tool_flags: Dict[str, bool] = {}
+            for mid in all_mcp_ids:
+                tool_flags[f"{mid}*"] = (mid in assigned) if assigned else True
+            return tool_flags
+
         orch_model = self.resolve_agent_model(blueprint.orchestrator)
         orch_id = blueprint.orchestrator.id
         orch_desc = json.dumps(f"{blueprint.orchestrator.name} — {blueprint.orchestrator.role}")
+        orch_mcp_tools = _build_agent_mcp_tools(blueprint.orchestrator.mcp_servers)
+        orch_mcp_yaml = "".join(f"  {k}: {str(v).lower()}\n" for k, v in orch_mcp_tools.items())
         orch_md = (
             "---\n"
             f"description: {orch_desc}\n"
@@ -57,8 +67,8 @@ class OpenCodeAdapter(HarnessAdapter):
             f"  edit: {str(blueprint.orchestrator.permissions.allow_write).lower()}\n"
             f"  bash: {str(blueprint.orchestrator.permissions.allow_shell).lower()}\n"
             "  webfetch: false\n"
-            "  playwright*: false\n"
-            "---\n\n"
+            + (orch_mcp_yaml if orch_mcp_yaml else "  playwright*: false\n")
+            + "---\n\n"
             f"{agents_md_content}\n"
         )
         files.append(
@@ -79,15 +89,21 @@ class OpenCodeAdapter(HarnessAdapter):
                     "write": blueprint.orchestrator.permissions.allow_write,
                     "edit": blueprint.orchestrator.permissions.allow_write,
                     "bash": blueprint.orchestrator.permissions.allow_shell,
+                    **orch_mcp_tools,
                 },
             },
         }
 
         for sa in blueprint.subagents:
             model_id = self.resolve_agent_model(sa)
-            # Use `mode: all` so OpenCode displays the agent BOTH in the interactive Tab / Agent Switcher
-            # AND allows the orchestrator to invoke it as a subagent via @mention or the task tool.
             sa_desc = json.dumps(f"{sa.name} — {sa.role}")
+            sa_mcp_tools = _build_agent_mcp_tools(sa.mcp_servers)
+            sa_mcp_yaml = "".join(f"  {k}: {str(v).lower()}\n" for k, v in sa_mcp_tools.items())
+            sa_mcp_note = (
+                f"\n## Assigned MCP Servers\nYou are authorized to use tools from: {', '.join(f'`{m}`' for m in sa.mcp_servers)}.\n"
+                if sa.mcp_servers
+                else ""
+            )
             subagent_md = (
                 "---\n"
                 f"description: {sa_desc}\n"
@@ -98,10 +114,11 @@ class OpenCodeAdapter(HarnessAdapter):
                 f"  edit: {str(sa.permissions.allow_write).lower()}\n"
                 f"  bash: {str(sa.permissions.allow_shell).lower()}\n"
                 "  webfetch: false\n"
-                "  playwright*: false\n"
-                "---\n\n"
+                + (sa_mcp_yaml if sa_mcp_yaml else "  playwright*: false\n")
+                + "---\n\n"
                 f"# {sa.name} (`{sa.id}`)\n\n"
                 f"{sa.system_prompt.strip()}\n"
+                f"{sa_mcp_note}"
             )
             files.append(
                 CompiledFile(
@@ -114,11 +131,12 @@ class OpenCodeAdapter(HarnessAdapter):
                 "mode": "all",
                 "model": model_id,
                 "description": f"{sa.name} — {sa.role}",
-                "prompt": f"# {sa.name} (`{sa.id}`)\n\n{sa.system_prompt.strip()}",
+                "prompt": f"# {sa.name} (`{sa.id}`)\n\n{sa.system_prompt.strip()}{sa_mcp_note}",
                 "tools": {
                     "write": sa.permissions.allow_write,
                     "edit": sa.permissions.allow_write,
                     "bash": sa.permissions.allow_shell,
+                    **sa_mcp_tools,
                 },
             }
 
@@ -284,14 +302,22 @@ class OpenCodeAdapter(HarnessAdapter):
         if provider_config_map:
             opencode_json["provider"] = provider_config_map
         if blueprint.mcp_servers:
-            opencode_json["mcp"] = {
-                srv.id: {
-                    "type": "local",
-                    "command": [srv.command or "npx", *srv.args],
-                    "environment": srv.env,
-                }
-                for srv in blueprint.mcp_servers
-            }
+            mcp_map: Dict[str, Any] = {}
+            for srv in blueprint.mcp_servers:
+                if srv.transport in ("sse", "http") and srv.url:
+                    mcp_map[srv.id] = {
+                        "type": "remote",
+                        "url": srv.url,
+                        "enabled": True,
+                    }
+                else:
+                    mcp_map[srv.id] = {
+                        "type": "local",
+                        "command": [srv.command or "npx", *srv.args],
+                        "environment": srv.env,
+                        "enabled": True,
+                    }
+            opencode_json["mcp"] = mcp_map
         else:
             # Disable global Playwright browser MCP in local workspace runs so agents don't pop up Chrome windows
             opencode_json["mcp"] = {

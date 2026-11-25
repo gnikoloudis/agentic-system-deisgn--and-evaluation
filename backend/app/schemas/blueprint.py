@@ -57,6 +57,10 @@ class OrchestratorSpec(BaseModel):
     tools: List[str] = Field(
         default_factory=lambda: ["read", "grep", "glob", "bash", "subagent"],
     )
+    mcp_servers: List[str] = Field(
+        default_factory=list,
+        description="Assigned MCP server IDs this orchestrator is authorized to use",
+    )
     permissions: AgentPermissions = Field(default_factory=AgentPermissions)
     budgets: ExecutionBudgets = Field(default_factory=ExecutionBudgets)
 
@@ -76,6 +80,10 @@ class SubagentSpec(BaseModel):
     system_prompt: str = Field(..., description="Detailed system instructions for this subagent")
     tools: List[str] = Field(
         default_factory=lambda: ["read", "write", "edit", "grep", "glob", "bash"],
+    )
+    mcp_servers: List[str] = Field(
+        default_factory=list,
+        description="Assigned MCP server IDs this subagent is authorized to use",
     )
     permissions: AgentPermissions = Field(default_factory=AgentPermissions)
     max_turns: int = Field(default=20, ge=1, le=200)
@@ -132,6 +140,7 @@ class HookSpec(BaseModel):
 
 class MCPServerSpec(BaseModel):
     id: str = Field(..., description="MCP server name")
+    description: str = Field(default="", description="What tools or external systems this MCP server exposes")
     transport: Literal["stdio", "sse", "http"] = Field(default="stdio")
     command: Optional[str] = Field(default=None, description="Executable for stdio MCP server")
     args: List[str] = Field(default_factory=list)

@@ -68,8 +68,17 @@ class ClaudeCodeAdapter(HarnessAdapter):
         # 2. Subagents -> .claude/agents/<id>.md
         for sa in blueprint.subagents:
             sa_tools = self._map_tools(sa.tools, sa.permissions.allow_write, sa.permissions.allow_shell)
+            for mcp_id in sa.mcp_servers:
+                mcp_tool_glob = f"mcp__{mcp_id}__*"
+                if mcp_tool_glob not in sa_tools:
+                    sa_tools.append(mcp_tool_glob)
             tools_str = ", ".join(sa_tools)
             model_id = self.resolve_agent_model(sa)
+            mcp_note = (
+                f"\n## Assigned MCP Servers\nYou are authorized to use tools from: {', '.join(f'`{m}`' for m in sa.mcp_servers)}.\n"
+                if sa.mcp_servers
+                else ""
+            )
             subagent_md = (
                 "---\n"
                 f"name: {sa.id}\n"
@@ -79,6 +88,7 @@ class ClaudeCodeAdapter(HarnessAdapter):
                 "---\n\n"
                 f"# {sa.name} (`{sa.id}`)\n\n"
                 f"{sa.system_prompt.strip()}\n"
+                f"{mcp_note}"
             )
             files.append(
                 CompiledFile(
@@ -194,18 +204,22 @@ class ClaudeCodeAdapter(HarnessAdapter):
             )
         )
 
-        # 5. MCP Servers -> .mcp.json
+        # 5. MCP Servers -> .mcp.json (supports stdio, sse, and http transports)
         if blueprint.mcp_servers:
-            mcp_payload = {
-                "mcpServers": {
-                    srv.id: {
-                        "command": srv.command,
+            mcp_servers_map: Dict[str, Any] = {}
+            for srv in blueprint.mcp_servers:
+                if srv.transport in ("sse", "http") and srv.url:
+                    entry: Dict[str, Any] = {"type": srv.transport, "url": srv.url}
+                    if srv.env:
+                        entry["env"] = srv.env
+                    mcp_servers_map[srv.id] = entry
+                else:
+                    mcp_servers_map[srv.id] = {
+                        "command": srv.command or "npx",
                         "args": srv.args,
                         "env": srv.env,
                     }
-                    for srv in blueprint.mcp_servers
-                }
-            }
+            mcp_payload = {"mcpServers": mcp_servers_map}
             files.append(
                 CompiledFile(
                     relative_path=".mcp.json",

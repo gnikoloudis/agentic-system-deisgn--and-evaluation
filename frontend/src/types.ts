@@ -24,6 +24,7 @@ export interface OrchestratorSpec {
   harness_models?: Record<string, string>;
   system_prompt: string;
   tools: string[];
+  mcp_servers?: string[];
   permissions: AgentPermissions;
   budgets: ExecutionBudgets;
 }
@@ -36,6 +37,7 @@ export interface SubagentSpec {
   harness_models?: Record<string, string>;
   system_prompt: string;
   tools: string[];
+  mcp_servers?: string[];
   permissions: AgentPermissions;
   max_turns: number;
 }
@@ -86,6 +88,7 @@ export interface HookSpec {
 
 export interface MCPServerSpec {
   id: string;
+  description?: string;
   transport: "stdio" | "sse" | "http";
   command?: string | null;
   args: string[];

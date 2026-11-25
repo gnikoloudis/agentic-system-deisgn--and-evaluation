@@ -432,12 +432,13 @@ class HarnessAdapter(ABC):
 
         if bp.subagents:
             lines.append("## 3. Deployed Subagent Roster")
-            lines.append("| Subagent ID | Name | Role | Resolved Model | Write Allowed | Shell Allowed |")
-            lines.append("| :--- | :--- | :--- | :--- | :--- | :--- |")
+            lines.append("| Subagent ID | Name | Role | Resolved Model | MCP Servers | Write Allowed | Shell Allowed |")
+            lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
             for sa in bp.subagents:
+                mcp_str = ", ".join(f"`{m}`" for m in sa.mcp_servers) if sa.mcp_servers else "None"
                 lines.append(
                     f"| `{sa.id}` | {sa.name} | {sa.role} | `{self.resolve_agent_model(sa)}` "
-                    f"| `{sa.permissions.allow_write}` | `{sa.permissions.allow_shell}` |"
+                    f"| {mcp_str} | `{sa.permissions.allow_write}` | `{sa.permissions.allow_shell}` |"
                 )
             lines.append("")
 
@@ -477,6 +478,27 @@ class HarnessAdapter(ABC):
             for hk in bp.hooks:
                 lines.append(
                     f"- **`{hk.id}`** (`{hk.event}` matching `{hk.matcher}` on `{hk.target_agent}` -> `{hk.action}`): {hk.message}"
+                )
+            lines.append("")
+
+        if bp.mcp_servers:
+            lines.append("## 6b. Connected MCP Servers & Agent Assignments")
+            for srv in bp.mcp_servers:
+                assigned_agents: List[str] = []
+                if srv.id in bp.orchestrator.mcp_servers:
+                    assigned_agents.append(f"`{bp.orchestrator.id}`")
+                for sa in bp.subagents:
+                    if srv.id in sa.mcp_servers:
+                        assigned_agents.append(f"`{sa.id}`")
+                endpoint = (
+                    f"`{srv.url}`"
+                    if srv.transport in ("sse", "http") and srv.url
+                    else f"`{' '.join([srv.command or 'npx', *srv.args])}`"
+                )
+                desc_part = f" — {srv.description}" if srv.description else ""
+                assigned_str = ", ".join(assigned_agents) if assigned_agents else "*Unassigned (workspace-wide)*"
+                lines.append(
+                    f"- **`{srv.id}`** (`{srv.transport}`: {endpoint}){desc_part} | **Assigned to**: {assigned_str}"
                 )
             lines.append("")
 

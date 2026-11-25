@@ -512,6 +512,46 @@ def test_issue_3_create_deploy_evaluate_and_delete_custom_benchmark_task(client:
         assert del_resp.json()["deleted"] is True
 
 
+def test_issue_4_mcp_server_assignments_and_three_harness_examples():
+    """Verify Issue #4: per-agent MCP server assignments & all 3 example blueprints (Antigravity, Claude Code, OpenCode)."""
+    # 1. Antigravity example
+    agy_tuple = get_blueprint("mcp-antigravity-fullstack-studio")
+    assert agy_tuple is not None
+    agy_comp = compile_architecture(agy_tuple[0], harness="antigravity", run_id="mcp-agy-test")
+    agy_files = {f.relative_path: f.content for f in agy_comp.files}
+    assert ".agents/mcp_config.json" in agy_files
+    agy_mcp = json.loads(agy_files[".agents/mcp_config.json"])["mcpServers"]
+    assert "code-graph" in agy_mcp and agy_mcp["code-graph"]["command"] == "npx"
+    assert agy_mcp["stitch"]["serverUrl"] == "https://stitch.googleapis.com/mcp"
+    assert "enable_mcp_tools: true" in agy_files[".agents/agents/codebase_architect.md"]
+    assert "enable_mcp_tools: false" in agy_files[".agents/agents/qa_verifier.md"]
+
+    # 2. Claude Code example
+    cc_tuple = get_blueprint("mcp-claude-code-security-ops")
+    assert cc_tuple is not None
+    cc_comp = compile_architecture(cc_tuple[0], harness="claude_code", run_id="mcp-cc-test")
+    cc_files = {f.relative_path: f.content for f in cc_comp.files}
+    assert ".mcp.json" in cc_files
+    cc_mcp = json.loads(cc_files[".mcp.json"])["mcpServers"]
+    assert "github" in cc_mcp and cc_mcp["sentry"]["type"] == "sse"
+    assert "mcp__sentry__*" in cc_files[".claude/agents/sentry_triager.md"]
+    assert "mcp__filesystem__*" not in cc_files[".claude/agents/sentry_triager.md"]
+    assert "mcp__github__*" in cc_files[".claude/agents/security_reviewer.md"]
+
+    # 3. OpenCode example
+    oc_tuple = get_blueprint("mcp-opencode-data-platform")
+    assert oc_tuple is not None
+    oc_comp = compile_architecture(oc_tuple[0], harness="opencode", run_id="mcp-oc-test")
+    oc_files = {f.relative_path: f.content for f in oc_comp.files}
+    oc_json = json.loads(oc_files["opencode.json"])
+    assert oc_json["mcp"]["context7"]["type"] == "remote"
+    assert oc_json["mcp"]["postgres"]["type"] == "local"
+    assert oc_json["agent"]["e2e_qa_tester"]["tools"]["playwright*"] is True
+    assert oc_json["agent"]["e2e_qa_tester"]["tools"]["postgres*"] is False
+    assert oc_json["agent"]["data_engineer"]["tools"]["postgres*"] is True
+    assert oc_json["agent"]["data_engineer"]["tools"]["playwright*"] is False
+
+
 
 
 

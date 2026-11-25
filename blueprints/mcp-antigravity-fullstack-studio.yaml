@@ -1,0 +1,155 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: mcp-antigravity-fullstack-studio
+  name: "Antigravity (AGY) Full-Stack MCP Studio (Code-Graph + Stitch + Postgres)"
+  version: "1.0.0"
+  description: "Example Antigravity multi-agent design connecting code-graph, stitch UI design, and postgres MCP servers to specialized subagents with strict least-privilege assignments."
+  tags:
+    - antigravity
+    - mcp
+    - fullstack
+    - example
+orchestrator:
+  id: fullstack_lead_agy
+  name: "Full-Stack Engineering Lead (AGY)"
+  role: "Coordinates architecture discovery, UI screen design, implementation, and database verification"
+  model: default
+  harness_models:
+    antigravity: gemini-4-argon-medium
+  system_prompt: |
+    You are the Full-Stack Engineering Lead running on Antigravity.
+    Delegate in strict order:
+    1. `codebase_architect` (uses `code-graph` MCP) to map call graphs and impact radius.
+    2. `ui_designer` (uses `stitch` MCP) to generate/update design screens and design system tokens.
+    3. `fullstack_coder` (uses `postgres` MCP + write tools) to implement API, schema, and UI code.
+    4. `qa_verifier` to run tests and confirm `VERDICT: PASS`.
+  tools: ["read", "grep", "glob", "subagent"]
+  mcp_servers: ["code-graph"]
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+  budgets:
+    max_turns: 35
+    max_cost_usd: 2.5
+    timeout_seconds: 600
+subagents:
+  - id: codebase_architect
+    name: "Codebase Graph Architect"
+    role: "Uses code-graph MCP to inspect ASTs, call graphs, and module dependencies"
+    model: reasoning
+    harness_models:
+      antigravity: gemini-4-neon-high
+    system_prompt: "Use the `code-graph` MCP server to map impacted modules and produce a concise implementation plan. Never modify files."
+    tools: ["read", "grep", "glob"]
+    mcp_servers: ["code-graph"]
+    permissions:
+      allow_shell: false
+      allow_write: false
+      allow_network: false
+    max_turns: 12
+  - id: ui_designer
+    name: "UI Screen & Design System Specialist"
+    role: "Uses stitch MCP to design screens and synchronize design tokens"
+    model: coding
+    harness_models:
+      antigravity: gemini-4-argon-high
+    system_prompt: "Use the `stitch` MCP server to generate screen layouts and design system tokens matching the project requirements."
+    tools: ["read"]
+    mcp_servers: ["stitch"]
+    permissions:
+      allow_shell: false
+      allow_write: false
+      allow_network: false
+    max_turns: 10
+  - id: fullstack_coder
+    name: "Full-Stack Implementation Engineer"
+    role: "Implements frontend/backend code and validates database schemas via postgres MCP"
+    model: coding
+    harness_models:
+      antigravity: gemini-4-argon-high
+    system_prompt: "Implement the planned changes, verify database queries with `postgres` MCP, and add automated unit tests."
+    tools: ["read", "write", "edit", "grep", "glob", "bash"]
+    mcp_servers: ["postgres", "code-graph"]
+    permissions:
+      allow_shell: true
+      allow_write: true
+      allow_network: false
+    max_turns: 25
+  - id: qa_verifier
+    name: "QA & Build Verifier"
+    role: "Runs test suites and type checks; returns VERDICT: PASS or VERDICT: FAIL"
+    model: fast
+    harness_models:
+      antigravity: gemini-3.8-flash-high
+    system_prompt: "Run `npm run build` and `pytest -v`. Never modify files. Return `VERDICT: PASS` or `VERDICT: FAIL`."
+    tools: ["read", "grep", "bash"]
+    mcp_servers: []
+    permissions:
+      allow_shell: true
+      allow_write: false
+      allow_network: false
+    max_turns: 10
+mcp_servers:
+  - id: code-graph
+    description: "Semantic code search, AST lookup, and call-graph analysis"
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-code-graph"]
+    env: {}
+  - id: stitch
+    description: "UI screen generation and design system management"
+    transport: http
+    url: "https://stitch.googleapis.com/mcp"
+    env: {}
+  - id: postgres
+    description: "Read-only PostgreSQL schema inspection and query validation"
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL}"]
+    env:
+      DATABASE_URL: "${DATABASE_URL}"
+topology:
+  pattern: generator-verifier-loop
+  enforcement_mode: dual
+  entry_node: fullstack_lead_agy
+  edges:
+    - id: e1
+      source: fullstack_lead_agy
+      target: codebase_architect
+      condition: "Step 1: Map codebase architecture with code-graph MCP"
+      order: 1
+      required: true
+      max_loops: 1
+    - id: e2
+      source: codebase_architect
+      target: ui_designer
+      condition: "Step 2: Generate UI screens & tokens with stitch MCP"
+      order: 2
+      required: false
+      max_loops: 1
+    - id: e3
+      source: ui_designer
+      target: fullstack_coder
+      condition: "Step 3: Implement code & DB schema with postgres MCP"
+      order: 3
+      required: true
+      max_loops: 3
+    - id: e4
+      source: fullstack_coder
+      target: qa_verifier
+      condition: "Step 4: Verify build & tests"
+      order: 4
+      required: true
+      max_loops: 3
+visual_layout:
+  nodes:
+    fullstack_lead_agy: { x: 260, y: 20 }
+    codebase_architect: { x: 40, y: 180 }
+    ui_designer: { x: 290, y: 180 }
+    fullstack_coder: { x: 540, y: 180 }
+    qa_verifier: { x: 290, y: 360 }
+    code-graph: { x: 820, y: 80 }
+    stitch: { x: 820, y: 220 }
+    postgres: { x: 820, y: 360 }

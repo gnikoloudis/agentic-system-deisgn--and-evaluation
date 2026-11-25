@@ -256,8 +256,30 @@ export const ArchitectureCanvas: React.FC<Props> = ({
       });
     });
 
+    // 5. MCP Servers
+    (blueprint.mcp_servers || []).forEach((srv, idx) => {
+      const pos = layout[srv.id] || { x: 680, y: 300 + idx * 130 };
+      const endpointLabel =
+        srv.transport === "stdio"
+          ? `${srv.command || "npx"} ${(srv.args || []).slice(0, 2).join(" ")}`.trim()
+          : srv.url || srv.transport;
+      flowNodes.push({
+        id: srv.id,
+        type: "architectureNode",
+        position: pos,
+        data: {
+          label: srv.id,
+          nodeType: "mcp",
+          subtitle: srv.description || `[${srv.transport.toUpperCase()}] ${endpointLabel}`,
+          isActive: false,
+          isSelected: selectedNodeId === srv.id,
+        },
+      });
+    });
+
     const skillIds = new Set(blueprint.skills.map((s) => s.id));
     const hookIds = new Set(blueprint.hooks.map((h) => h.id));
+    const mcpIds = new Set((blueprint.mcp_servers || []).map((m) => m.id));
 
     const flowEdges: Edge[] = blueprint.topology.edges.map((e) => {
       const isSkillEdge = skillIds.has(e.target) || skillIds.has(e.source);
@@ -328,6 +350,44 @@ export const ArchitectureCanvas: React.FC<Props> = ({
       }
     });
 
+    // Automatically render Agent / Subagent -> Assigned MCP Server binding edges
+    const addMcpEdge = (agentId: string, mcpId: string) => {
+      if (!mcpIds.has(mcpId)) return;
+      const alreadyHas = flowEdges.some(
+        (fe) =>
+          (fe.source === agentId && fe.target === mcpId) ||
+          (fe.source === mcpId && fe.target === agentId)
+      );
+      if (!alreadyHas) {
+        flowEdges.push({
+          id: `mcp_bind_${agentId}_${mcpId}`,
+          source: agentId,
+          target: mcpId,
+          label: `MCP: ${mcpId}`,
+          animated: false,
+          style: {
+            stroke: "#a855f7",
+            strokeWidth: 2,
+            strokeDasharray: "5 4",
+          },
+          labelStyle: { fill: "#d8b4fe", fontSize: 10, fontWeight: 600 },
+          labelBgStyle: { fill: "#0f172a", fillOpacity: 0.9 },
+          labelBgPadding: [5, 2] as [number, number],
+          labelBgBorderRadius: 5,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: "#a855f7",
+          },
+        });
+      }
+    };
+    (blueprint.orchestrator.mcp_servers || []).forEach((mid) =>
+      addMcpEdge(blueprint.orchestrator.id, mid)
+    );
+    blueprint.subagents.forEach((sa) => {
+      (sa.mcp_servers || []).forEach((mid) => addMcpEdge(sa.id, mid));
+    });
+
     return { flowNodes, flowEdges };
   }, [blueprint, activeAgentId, selectedNodeId, resolveNodeModel]);
 
@@ -372,6 +432,38 @@ export const ArchitectureCanvas: React.FC<Props> = ({
         return;
       }
 
+      // If dragging between an Agent/Subagent and an MCP Server node, assign that MCP server to the agent
+      const allMcps = blueprint.mcp_servers || [];
+      const mcpFromTarget = allMcps.find((m) => m.id === connection.target);
+      const mcpFromSource = allMcps.find((m) => m.id === connection.source);
+      if (mcpFromTarget || mcpFromSource) {
+        const mcpId = (mcpFromTarget || mcpFromSource)!.id;
+        const agentId = mcpFromTarget ? connection.source : connection.target;
+        if (agentId === blueprint.orchestrator.id) {
+          const curr = blueprint.orchestrator.mcp_servers || [];
+          if (!curr.includes(mcpId)) {
+            onUpdateBlueprint({
+              ...blueprint,
+              orchestrator: { ...blueprint.orchestrator, mcp_servers: [...curr, mcpId] },
+            });
+          }
+          return;
+        }
+        const targetSa = blueprint.subagents.find((s) => s.id === agentId);
+        if (targetSa) {
+          const curr = targetSa.mcp_servers || [];
+          if (!curr.includes(mcpId)) {
+            onUpdateBlueprint({
+              ...blueprint,
+              subagents: blueprint.subagents.map((s) =>
+                s.id === targetSa.id ? { ...s, mcp_servers: [...curr, mcpId] } : s
+              ),
+            });
+          }
+          return;
+        }
+      }
+
       const isTargetSkill = blueprint.skills.some((s) => s.id === connection.target);
       const newEdgeId = `e_${connection.source}_${connection.target}_${Date.now().toString().slice(-3)}`;
       const nextOrder = blueprint.topology.edges.length + 1;
@@ -414,9 +506,19 @@ export const ArchitectureCanvas: React.FC<Props> = ({
 
       onUpdateBlueprint({
         ...blueprint,
-        subagents: blueprint.subagents.filter((s) => !deletedIds.has(s.id)),
+        orchestrator: {
+          ...blueprint.orchestrator,
+          mcp_servers: (blueprint.orchestrator.mcp_servers || []).filter((m) => !deletedIds.has(m)),
+        },
+        subagents: blueprint.subagents
+          .filter((s) => !deletedIds.has(s.id))
+          .map((s) => ({
+            ...s,
+            mcp_servers: (s.mcp_servers || []).filter((m) => !deletedIds.has(m)),
+          })),
         skills: blueprint.skills.filter((sk) => !deletedIds.has(sk.id)),
         hooks: blueprint.hooks.filter((h) => !deletedIds.has(h.id)),
+        mcp_servers: (blueprint.mcp_servers || []).filter((m) => !deletedIds.has(m.id)),
         topology: {
           ...blueprint.topology,
           edges: blueprint.topology.edges.filter(

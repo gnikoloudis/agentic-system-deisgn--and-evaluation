@@ -1,0 +1,132 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: mcp-claude-code-security-ops
+  name: "Claude Code Engineering & Security Ops (GitHub + Sentry + Filesystem MCP)"
+  version: "1.0.0"
+  description: "Example Claude Code multi-agent architecture assigning GitHub, Sentry, and Filesystem MCP servers to specialized triage, patch, and security review subagents."
+  tags:
+    - claude_code
+    - mcp
+    - security
+    - example
+orchestrator:
+  id: incident_orchestrator_claude
+  name: "Incident & Release Orchestrator (Claude)"
+  role: "Coordinates Sentry triage, GitHub PR inspection, code fixes, and security verification"
+  model: default
+  harness_models:
+    claude_code: claude-sonnet-4-20250514
+  system_prompt: |
+    You are the Incident & Release Orchestrator running on Claude Code.
+    1. Delegate to `sentry_triager` (assigned `sentry` MCP) to pull stack traces and root-cause recent errors.
+    2. Delegate to `patch_engineer` (assigned `filesystem` + `github` MCP) to implement fixes and tests.
+    3. Delegate to `security_reviewer` (assigned `github` MCP) to audit diffs and open/update PR review comments.
+  tools: ["read", "grep", "glob", "subagent"]
+  mcp_servers: ["github"]
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+  budgets:
+    max_turns: 30
+    max_cost_usd: 3.0
+    timeout_seconds: 600
+subagents:
+  - id: sentry_triager
+    name: "Sentry Incident Triager"
+    role: "Queries Sentry MCP for live stack traces, breadcrumbs, and affected releases"
+    model: reasoning
+    harness_models:
+      claude_code: claude-opus-4-20250514
+    system_prompt: "Use the `sentry` MCP server to retrieve failing stack traces and pinpoint the root cause file/line. Do not edit files."
+    tools: ["read", "grep", "glob"]
+    mcp_servers: ["sentry"]
+    permissions:
+      allow_shell: false
+      allow_write: false
+      allow_network: false
+    max_turns: 10
+  - id: patch_engineer
+    name: "Patch Implementation Engineer"
+    role: "Implements minimal targeted fixes and regression unit tests"
+    model: coding
+    harness_models:
+      claude_code: claude-sonnet-4-20250514
+    system_prompt: "Implement the fix, write regression unit tests, and run `pytest -v`."
+    tools: ["read", "write", "edit", "grep", "glob", "bash"]
+    mcp_servers: ["filesystem", "github"]
+    permissions:
+      allow_shell: true
+      allow_write: true
+      allow_network: false
+    max_turns: 20
+  - id: security_reviewer
+    name: "Security & PR Auditor"
+    role: "Audits diff for OWASP risks and prepares GitHub PR review via github MCP"
+    model: fast
+    harness_models:
+      claude_code: claude-3-5-haiku-latest
+    system_prompt: "Audit `git diff` for security regressions and verify tests pass. Use `github` MCP to inspect PR checks. Reply `VERDICT: PASS` or `VERDICT: FAIL`."
+    tools: ["read", "grep", "bash"]
+    mcp_servers: ["github"]
+    permissions:
+      allow_shell: true
+      allow_write: false
+      allow_network: false
+    max_turns: 10
+mcp_servers:
+  - id: github
+    description: "GitHub issues, pull requests, and CI check status"
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-github"]
+    env:
+      GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}"
+  - id: sentry
+    description: "Production error telemetry and stack trace lookup"
+    transport: sse
+    url: "https://mcp.sentry.io/sse"
+    env:
+      SENTRY_AUTH_TOKEN: "${SENTRY_AUTH_TOKEN}"
+  - id: filesystem
+    description: "Scoped local project filesystem access"
+    transport: stdio
+    command: npx
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    env: {}
+topology:
+  pattern: generator-verifier-loop
+  enforcement_mode: dual
+  entry_node: incident_orchestrator_claude
+  edges:
+    - id: e1
+      source: incident_orchestrator_claude
+      target: sentry_triager
+      condition: "Step 1: Triage production error via Sentry MCP"
+      order: 1
+      required: true
+      max_loops: 1
+    - id: e2
+      source: sentry_triager
+      target: patch_engineer
+      condition: "Step 2: Implement fix & regression test"
+      order: 2
+      required: true
+      max_loops: 3
+    - id: e3
+      source: patch_engineer
+      target: security_reviewer
+      condition: "Step 3: Audit security & PR checks via GitHub MCP"
+      order: 3
+      required: true
+      max_loops: 3
+visual_layout:
+  nodes:
+    incident_orchestrator_claude: { x: 260, y: 20 }
+    sentry_triager: { x: 60, y: 190 }
+    patch_engineer: { x: 310, y: 190 }
+    security_reviewer: { x: 560, y: 190 }
+    github: { x: 820, y: 70 }
+    sentry: { x: 820, y: 200 }
+    filesystem: { x: 820, y: 330 }
