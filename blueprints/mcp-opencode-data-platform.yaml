@@ -2,130 +2,201 @@ api_version: harnessforge/v1
 kind: AgentArchitecture
 metadata:
   id: mcp-opencode-data-platform
-  name: "OpenCode Data & Web QA Team (Postgres + Context7 + Playwright MCP)"
-  version: "1.0.0"
-  description: "Example OpenCode multi-agent architecture with per-agent MCP scoping: Context7 docs for the planner, Postgres for the API engineer, and Playwright exclusively for the E2E QA verifier."
+  name: OpenCode Data & Web QA Team (Postgres + Context7 + Playwright MCP)
+  version: 1.0.0
+  description: 'Example OpenCode multi-agent architecture with per-agent MCP scoping: Context7 docs for
+    the planner, Postgres for the API engineer, and Playwright exclusively for the E2E QA verifier.'
   tags:
-    - opencode
-    - mcp
-    - data-platform
-    - example
+  - opencode
+  - mcp
+  - data-platform
+  - example
+  author: HarnessForge User
 orchestrator:
   id: platform_orchestrator_oc
-  name: "Platform Delivery Lead (OpenCode)"
-  role: "Orchestrates API docs lookup, backend/SQL implementation, and browser E2E verification"
+  name: Platform Delivery Lead (OpenCode)
+  role: Orchestrates API docs lookup, backend/SQL implementation, and browser E2E verification
   model: default
   harness_models:
     opencode: opencode/deepseek-v4.1-flash-free
-  system_prompt: |
-    You are the Platform Delivery Lead running on OpenCode.
+  system_prompt: 'You are the Platform Delivery Lead running on OpenCode.
+
     1. Delegate to `api_researcher` (assigned `context7` MCP) to pull up-to-date framework docs.
+
     2. Delegate to `data_engineer` (assigned `postgres` MCP) to build API endpoints and migrations.
-    3. Delegate to `e2e_qa_tester` (assigned `playwright` MCP) to run browser E2E checks and return `VERDICT: PASS` or `VERDICT: FAIL`.
-  tools: ["read", "grep", "glob", "subagent"]
-  mcp_servers: ["context7"]
+
+    3. Delegate to `e2e_qa_tester` (assigned `playwright` MCP) to run browser E2E checks and return `VERDICT:
+    PASS` or `VERDICT: FAIL`.
+
+    '
+  tools:
+  - read
+  - grep
+  - glob
+  - subagent
+  mcp_servers:
+  - context7
   permissions:
     allow_shell: false
     allow_write: false
     allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
   budgets:
     max_turns: 35
     max_cost_usd: 1.5
     timeout_seconds: 600
+    context_compaction_threshold_pct: 80
 subagents:
-  - id: api_researcher
-    name: "Framework & Docs Researcher"
-    role: "Queries Context7 MCP for current library APIs and migration guides"
-    model: reasoning
-    harness_models:
-      opencode: opencode/nemotron-3.5-super-vl-free
-    system_prompt: "Use `context7` MCP to verify exact library APIs and produce a technical spec for `data_engineer`."
-    tools: ["read", "grep", "glob"]
-    mcp_servers: ["context7"]
-    permissions:
-      allow_shell: false
-      allow_write: false
-      allow_network: false
-    max_turns: 10
-  - id: data_engineer
-    name: "Data & API Engineer"
-    role: "Writes SQL migrations, FastAPI endpoints, and inspects schema via Postgres MCP"
-    model: coding
-    harness_models:
-      opencode: opencode/big-pickle
-    system_prompt: "Implement the API and SQL changes, verifying schema constraints with `postgres` MCP."
-    tools: ["read", "write", "edit", "grep", "glob", "bash"]
-    mcp_servers: ["postgres"]
-    permissions:
-      allow_shell: true
-      allow_write: true
-      allow_network: false
-    max_turns: 20
-  - id: e2e_qa_tester
-    name: "Browser E2E QA Tester"
-    role: "Uses Playwright MCP exclusively to verify rendered UI flows and API integration"
-    model: fast
-    harness_models:
-      opencode: opencode/deepseek-v4.1-flash-free
-    system_prompt: "Run browser E2E assertions using `playwright` MCP. Never modify application source files. Reply `VERDICT: PASS` or `VERDICT: FAIL`."
-    tools: ["read", "bash"]
-    mcp_servers: ["playwright"]
-    permissions:
-      allow_shell: true
-      allow_write: false
-      allow_network: false
-    max_turns: 12
+- id: api_researcher
+  name: Framework & Docs Researcher
+  role: Queries Context7 MCP for current library APIs and migration guides
+  model: reasoning
+  harness_models:
+    opencode: opencode/nemotron-3.5-super-vl-free
+  system_prompt: Use `context7` MCP to verify exact library APIs and produce a technical spec for `data_engineer`.
+  tools:
+  - read
+  - grep
+  - glob
+  mcp_servers:
+  - context7
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 10
+- id: data_engineer
+  name: Data & API Engineer
+  role: Writes SQL migrations, FastAPI endpoints, and inspects schema via Postgres MCP
+  model: coding
+  harness_models:
+    opencode: opencode/big-pickle
+  system_prompt: Implement the API and SQL changes, verifying schema constraints with `postgres` MCP.
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  - bash
+  mcp_servers:
+  - postgres
+  permissions:
+    allow_shell: true
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 20
+- id: e2e_qa_tester
+  name: Browser E2E QA Tester
+  role: Uses Playwright MCP exclusively to verify rendered UI flows and API integration
+  model: fast
+  harness_models:
+    opencode: opencode/deepseek-v4.1-flash-free
+  system_prompt: 'Run browser E2E assertions using `playwright` MCP. Never modify application source files.
+    Reply `VERDICT: PASS` or `VERDICT: FAIL`.'
+  tools:
+  - read
+  - bash
+  mcp_servers:
+  - playwright
+  permissions:
+    allow_shell: true
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 12
+skills: []
+commands: []
+hooks: []
 mcp_servers:
-  - id: context7
-    description: "Up-to-date library documentation lookup"
-    transport: http
-    url: "https://mcp.context7.com/mcp"
-    env: {}
-  - id: postgres
-    description: "PostgreSQL schema inspection and SQL query execution"
-    transport: stdio
-    command: npx
-    args: ["-y", "@modelcontextprotocol/server-postgres", "${DATABASE_URL}"]
-    env:
-      DATABASE_URL: "${DATABASE_URL}"
-  - id: playwright
-    description: "Headless browser automation for E2E UI verification"
-    transport: stdio
-    command: npx
-    args: ["-y", "@playwright/mcp@latest", "--headless"]
-    env: {}
+- id: context7
+  description: Up-to-date library documentation lookup
+  transport: http
+  command: null
+  args: []
+  url: https://mcp.context7.com/mcp
+  env: {}
+- id: postgres
+  description: PostgreSQL schema inspection and SQL query execution
+  transport: stdio
+  command: npx
+  args:
+  - -y
+  - '@modelcontextprotocol/server-postgres'
+  - ${DATABASE_URL}
+  url: null
+  env:
+    DATABASE_URL: ${DATABASE_URL}
+- id: playwright
+  description: Headless browser automation for E2E UI verification
+  transport: stdio
+  command: npx
+  args:
+  - -y
+  - '@playwright/mcp@latest'
+  - --headless
+  url: null
+  env: {}
 topology:
   pattern: generator-verifier-loop
   enforcement_mode: dual
   entry_node: platform_orchestrator_oc
   edges:
-    - id: e1
-      source: platform_orchestrator_oc
-      target: api_researcher
-      condition: "Step 1: Lookup library docs via Context7 MCP"
-      order: 1
-      required: true
-      max_loops: 1
-    - id: e2
-      source: api_researcher
-      target: data_engineer
-      condition: "Step 2: Implement API & SQL via Postgres MCP"
-      order: 2
-      required: true
-      max_loops: 3
-    - id: e3
-      source: data_engineer
-      target: e2e_qa_tester
-      condition: "Step 3: Run E2E browser QA via Playwright MCP"
-      order: 3
-      required: true
-      max_loops: 3
+  - id: e1
+    source: platform_orchestrator_oc
+    target: api_researcher
+    condition: 'Step 1: Lookup library docs via Context7 MCP'
+    order: 1
+    required: true
+    max_loops: 1
+  - id: e2
+    source: api_researcher
+    target: data_engineer
+    condition: 'Step 2: Implement API & SQL via Postgres MCP'
+    order: 2
+    required: true
+    max_loops: 3
+  - id: e3
+    source: data_engineer
+    target: e2e_qa_tester
+    condition: 'Step 3: Run E2E browser QA via Playwright MCP'
+    order: 3
+    required: true
+    max_loops: 3
 visual_layout:
   nodes:
-    platform_orchestrator_oc: { x: 260, y: 20 }
-    api_researcher: { x: 60, y: 190 }
-    data_engineer: { x: 310, y: 190 }
-    e2e_qa_tester: { x: 560, y: 190 }
-    context7: { x: 820, y: 70 }
-    postgres: { x: 820, y: 200 }
-    playwright: { x: 820, y: 330 }
+    platform_orchestrator_oc:
+      x: 30.0
+      y: -276.0
+    api_researcher:
+      x: -600.0
+      y: 74.0
+    data_engineer:
+      x: -146.0
+      y: 324.0
+    e2e_qa_tester:
+      x: 334.0
+      y: 734.0
+    context7:
+      x: 108.0
+      y: 148.0
+    postgres:
+      x: 348.0
+      y: 402.0
+    playwright:
+      x: -282.0
+      y: 924.0
