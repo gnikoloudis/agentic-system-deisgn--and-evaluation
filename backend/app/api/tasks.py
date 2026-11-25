@@ -22,6 +22,7 @@ class TaskWithYamlResponse(BaseModel):
 class SaveTaskRequest(BaseModel):
     task: Optional[TaskSpec] = None
     raw_yaml: Optional[str] = None
+    previous_id: Optional[str] = None
 
 
 @router.get("", response_model=List[TaskSpec])
@@ -48,6 +49,8 @@ def api_save_task(req: SaveTaskRequest) -> TaskWithYamlResponse:
             t, raw, path = save_task(req.task)
         else:
             raise ValueError("Provide either task or raw_yaml")
+        if req.previous_id and req.previous_id != t.id:
+            delete_task(req.previous_id)
         return TaskWithYamlResponse(task=t, raw_yaml=raw, file_path=str(path))
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid task specification: {exc}") from exc

@@ -109,10 +109,14 @@ export const api = {
   listTasks: () => request<TaskSpec[]>("/tasks"),
   getTask: (id: string) =>
     request<{ task: TaskSpec; raw_yaml: string; file_path: string }>(`/tasks/${id}`),
-  saveTask: (payload: { task?: TaskSpec; raw_yaml?: string }) =>
+  saveTask: (payload: { task?: TaskSpec; raw_yaml?: string; previous_id?: string }) =>
     request<{ task: TaskSpec; raw_yaml: string; file_path: string }>("/tasks", {
       method: "POST",
       body: JSON.stringify(payload),
+    }),
+  deleteTask: (id: string) =>
+    request<{ deleted: boolean; id: string }>(`/tasks/${id}`, {
+      method: "DELETE",
     }),
 
   getHarnessStatus: () =>

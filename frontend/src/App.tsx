@@ -98,6 +98,14 @@ export default function App() {
   const [tasks, setTasks] = useState<TaskSpec[]>([]);
   const [selectedTask, setSelectedTask] = useState<TaskSpec | null>(null);
   const [taskYaml, setTaskYaml] = useState<string>("");
+  const [showNewTaskTemplates, setShowNewTaskTemplates] = useState<boolean>(false);
+  const [newVerifierName, setNewVerifierName] = useState<string>("");
+  const [newVerifierType, setNewVerifierType] = useState<string>("command_exit_code");
+  const [newVerifierCommand, setNewVerifierCommand] = useState<string>("");
+  const [newVerifierTargetPath, setNewVerifierTargetPath] = useState<string>("");
+  const [newVerifierPattern, setNewVerifierPattern] = useState<string>("");
+  const [newVerifierWeight, setNewVerifierWeight] = useState<number>(1.5);
+  const [newVerifierRequired, setNewVerifierRequired] = useState<boolean>(true);
 
   // Runner & Telemetry state
   const [runHarness, setRunHarness] = useState<HarnessType>("claude_code");
@@ -2792,102 +2800,443 @@ export default function App() {
         {/* ==================== TAB 2: BENCHMARK TASKS ==================== */}
         {activeTab === "tasks" && (
           <div className="flex-1 flex overflow-hidden">
-            <aside className="w-80 border-r border-slate-800 bg-slate-900/60 p-4 space-y-2 overflow-y-auto">
-              <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-2">
-                Benchmark Task Suite ({tasks.length})
-              </div>
-              {tasks.map((t) => (
+            <aside className="w-80 border-r border-slate-800 bg-slate-900/60 p-4 space-y-2.5 overflow-y-auto shrink-0">
+              <div className="flex items-center justify-between">
+                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                  Benchmark Tasks ({tasks.length})
+                </div>
                 <button
-                  key={t.id}
-                  onClick={async () => {
-                    const res = await api.getTask(t.id);
-                    setSelectedTask(res.task);
-                    setTaskYaml(res.raw_yaml);
-                  }}
-                  className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer ${selectedTask?.id === t.id
-                    ? "bg-indigo-950/70 border-indigo-500 text-white"
-                    : "bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700"
-                    }`}
+                  onClick={() => setShowNewTaskTemplates((v) => !v)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold cursor-pointer"
                 >
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-xs">{t.name}</span>
-                  </div>
-                  <div className="flex items-center gap-2 mt-1.5 text-[10px]">
-                    <span className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 uppercase">
-                      {t.category}
-                    </span>
-                    <span className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 uppercase">
-                      {t.difficulty}
-                    </span>
-                    <span className="text-slate-400">{t.verifiers.length} verifiers</span>
-                  </div>
+                  <Plus className="w-3 h-3" /> New Task
                 </button>
-              ))}
+              </div>
+
+              {/* Starter Templates for Different Agentic Designs */}
+              {showNewTaskTemplates && (
+                <div className="p-2.5 rounded-xl bg-slate-950 border border-emerald-700/60 space-y-1.5">
+                  <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-300">
+                    Create Benchmark Task From Template
+                  </div>
+                  {[
+                    {
+                      label: "Frontend / React UI App",
+                      template: {
+                        id: `ui-benchmark-${Date.now().toString().slice(-4)}`,
+                        name: "React UI Feature & Type-Check Benchmark",
+                        category: "frontend-ui",
+                        difficulty: "medium" as const,
+                        description: "Evaluates a coding agent architecture on building React/TypeScript UI components cleanly with zero type or build errors.",
+                        prompt: "Implement the requested UI components and verify with `npx tsc -b` and `npm run build`.",
+                        workspace_source: exportDir.trim() || ".",
+                        expected_subagents: selectedBlueprint ? selectedBlueprint.subagents.map((s) => s.id) : ["planner", "coder", "verifier"],
+                        verifiers: [
+                          { id: "tsc_check", name: "TypeScript Type-Check (npx tsc -b)", type: "command_exit_code", command: "npx tsc -b", weight: 2.0, required: true, timeout_seconds: 60 },
+                          { id: "prod_build", name: "Production Build (npm run build)", type: "command_exit_code", command: "npm run build", weight: 2.0, required: true, timeout_seconds: 90 },
+                        ],
+                        tags: ["react", "typescript", "frontend-ui"],
+                      },
+                    },
+                    {
+                      label: "Python / Backend Code",
+                      template: {
+                        id: `code-benchmark-${Date.now().toString().slice(-4)}`,
+                        name: "Backend Feature & Unit Test Benchmark",
+                        category: "feature",
+                        difficulty: "medium" as const,
+                        description: "Evaluates a multi-agent engineering architecture on implementing backend logic and passing pytest.",
+                        prompt: "Implement the requested backend feature, write unit tests, and confirm `pytest -v` passes.",
+                        workspace_source: exportDir.trim() || ".",
+                        expected_subagents: selectedBlueprint ? selectedBlueprint.subagents.map((s) => s.id) : ["planner", "coder", "verifier"],
+                        verifiers: [
+                          { id: "pytest_suite", name: "Pytest Suite (pytest -v)", type: "pytest_pass", command: "pytest -v", weight: 2.0, required: true, timeout_seconds: 60 },
+                          { id: "diff_limit", name: "Concise Diff (<= 200 lines)", type: "git_diff_max_lines", max_lines: 200, weight: 0.5, required: false, timeout_seconds: 10 },
+                        ],
+                        tags: ["python", "backend", "pytest"],
+                      },
+                    },
+                    {
+                      label: "Technical BA / User Stories (No-Code)",
+                      template: {
+                        id: `tba-benchmark-${Date.now().toString().slice(-4)}`,
+                        name: "Technical BA Delivery Pack (Stories + Workflows)",
+                        category: "business-analysis",
+                        difficulty: "medium" as const,
+                        description: "Evaluates a TBA agent team on producing Connextra/3Cs/INVEST User Stories and Mermaid Process/State Workflows.",
+                        prompt: "Analyze all stakeholder requirements and author `WORKFLOWS_AND_DELIVERY_DOCS.md` and `EPICS_AND_USER_STORIES.md`.",
+                        workspace_source: exportDir.trim() || ".",
+                        expected_subagents: selectedBlueprint ? selectedBlueprint.subagents.map((s) => s.id) : ["requirements_elicitor", "workflow_architect", "user_story_author", "ba_qa_gatekeeper"],
+                        verifiers: [
+                          { id: "user_story_std", name: "User Story Standard (Connextra + 3Cs + INVEST + BDD)", type: "user_story_invest_check", target_path: "EPICS_AND_USER_STORIES.md", weight: 2.5, required: true, timeout_seconds: 15 },
+                          { id: "mermaid_docs", name: "Valid Mermaid Diagrams", type: "mermaid_diagram_valid", target_path: "WORKFLOWS_AND_DELIVERY_DOCS.md", weight: 1.5, required: true, timeout_seconds: 15 },
+                        ],
+                        tags: ["business-analysis", "no-code", "user-stories"],
+                      },
+                    },
+                    {
+                      label: "PM / Meeting Synthesis (No-Code)",
+                      template: {
+                        id: `pm-benchmark-${Date.now().toString().slice(-4)}`,
+                        name: "PM Meeting Notes, Decisions & Action Items Benchmark",
+                        category: "product-management",
+                        difficulty: "medium" as const,
+                        description: "Evaluates a PM / Meeting Orchestrator architecture on synthesizing meeting transcripts into structured decisions, owners, risks, and action items.",
+                        prompt: "Synthesize the meeting inputs into `MEETING_SUMMARY.md` with Executive Summary, Decisions, Action Items, Risks, and Next Steps.",
+                        workspace_source: exportDir.trim() || ".",
+                        expected_subagents: selectedBlueprint ? selectedBlueprint.subagents.map((s) => s.id) : [],
+                        verifiers: [
+                          { id: "summary_exists", name: "MEETING_SUMMARY.md exists", type: "file_exists", target_path: "MEETING_SUMMARY.md", weight: 1.0, required: true, timeout_seconds: 10 },
+                          { id: "pm_sections", name: "Required PM Sections Present", type: "markdown_sections_present", target_path: "MEETING_SUMMARY.md", pattern: "Executive Summary,Decisions,Action Items,Risks,Next Steps", weight: 2.0, required: true, timeout_seconds: 15 },
+                        ],
+                        tags: ["product-management", "no-code", "meetings"],
+                      },
+                    },
+                    {
+                      label: "Blank Custom Task",
+                      template: {
+                        id: `custom-task-${Date.now().toString().slice(-4)}`,
+                        name: "Custom Evaluation Benchmark Task",
+                        category: "custom",
+                        difficulty: "medium" as const,
+                        description: "Custom benchmark task tailored to your agentic architecture.",
+                        prompt: "Describe the task goal and expected deliverables here.",
+                        workspace_source: exportDir.trim() || ".",
+                        expected_subagents: selectedBlueprint ? selectedBlueprint.subagents.map((s) => s.id) : [],
+                        verifiers: [
+                          { id: "deliverable_check", name: "Primary Deliverable Exists", type: "file_exists", target_path: "README.md", weight: 1.0, required: true, timeout_seconds: 10 },
+                        ],
+                        tags: ["custom"],
+                      },
+                    },
+                  ].map((item) => (
+                    <button
+                      key={item.label}
+                      onClick={async () => {
+                        try {
+                          const saved = await api.saveTask({ task: item.template });
+                          setSelectedTask(saved.task);
+                          setTaskYaml(saved.raw_yaml);
+                          setTasks(await api.listTasks());
+                          setShowNewTaskTemplates(false);
+                          notify(`Created new benchmark task '${saved.task.name}'!`);
+                        } catch (err: unknown) {
+                          notify(err instanceof Error ? err.message : "Failed to create task", "err");
+                        }
+                      }}
+                      className="w-full text-left px-2.5 py-1.5 rounded-lg bg-slate-900 hover:bg-indigo-950/70 border border-slate-800 hover:border-indigo-500/60 text-[11px] text-slate-200 cursor-pointer"
+                    >
+                      + {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {tasks.map((t) => {
+                const isSel = selectedTask?.id === t.id;
+                return (
+                  <div
+                    key={t.id}
+                    onClick={async () => {
+                      const res = await api.getTask(t.id);
+                      setSelectedTask(res.task);
+                      setTaskYaml(res.raw_yaml);
+                    }}
+                    className={`w-full text-left p-3 rounded-xl border transition-all cursor-pointer ${isSel
+                      ? "bg-indigo-950/70 border-indigo-500 text-white"
+                      : "bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700"
+                      }`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="font-semibold text-xs leading-snug">{t.name}</span>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            try {
+                              const full = await api.getTask(t.id);
+                              const cloned: TaskSpec = {
+                                ...full.task,
+                                id: `${full.task.id}-copy-${Date.now().toString().slice(-3)}`,
+                                name: `${full.task.name} (Copy)`,
+                              };
+                              const saved = await api.saveTask({ task: cloned });
+                              setSelectedTask(saved.task);
+                              setTaskYaml(saved.raw_yaml);
+                              setTasks(await api.listTasks());
+                              notify(`Cloned benchmark task '${t.name}'`);
+                            } catch (err: unknown) {
+                              notify(err instanceof Error ? err.message : "Clone failed", "err");
+                            }
+                          }}
+                          className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-300 cursor-pointer"
+                          title="Clone this benchmark task"
+                        >
+                          <Layers className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            if (tasks.length <= 1) {
+                              notify("Cannot delete the last remaining benchmark task.", "err");
+                              return;
+                            }
+                            try {
+                              await api.deleteTask(t.id);
+                              const remaining = await api.listTasks();
+                              setTasks(remaining);
+                              if (isSel && remaining.length > 0) {
+                                const next = await api.getTask(remaining[0].id);
+                                setSelectedTask(next.task);
+                                setTaskYaml(next.raw_yaml);
+                              }
+                              notify(`Deleted benchmark task '${t.name}'`);
+                            } catch (err: unknown) {
+                              notify(err instanceof Error ? err.message : "Delete failed", "err");
+                            }
+                          }}
+                          className="p-1 rounded hover:bg-rose-950 text-slate-400 hover:text-rose-400 cursor-pointer"
+                          title="Delete this benchmark task"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 mt-1.5 text-[10px]">
+                      <span className="px-1.5 py-0.5 rounded bg-slate-800 text-cyan-300 uppercase">
+                        {t.category}
+                      </span>
+                      <span className="px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 uppercase">
+                        {t.difficulty}
+                      </span>
+                      <span className="text-slate-400">{t.verifiers.length} verifiers</span>
+                    </div>
+                  </div>
+                );
+              })}
             </aside>
 
             {selectedTask && (
               <div className="flex-1 grid grid-cols-2 gap-6 p-6 overflow-y-auto">
                 <div className="space-y-4">
-                  <div>
-                    <h2 className="text-lg font-bold text-white">{selectedTask.name}</h2>
-                    <p className="text-xs text-slate-400 mt-1">{selectedTask.description}</p>
-                  </div>
-                  <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
-                    <div className="text-xs font-bold uppercase text-indigo-400">
-                      Task Prompt Sent to Harness
+                  {/* Visual Task Metadata Editor */}
+                  <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3 text-xs">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-indigo-400">
+                        Benchmark Task Designer
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={async () => {
+                            try {
+                              const saved = await api.saveTask({ task: selectedTask });
+                              setSelectedTask(saved.task);
+                              setTaskYaml(saved.raw_yaml);
+                              setTasks(await api.listTasks());
+                              notify(`Saved benchmark task '${saved.task.name}'!`);
+                            } catch (err: unknown) {
+                              notify(err instanceof Error ? err.message : "Save failed", "err");
+                            }
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold cursor-pointer"
+                        >
+                          <Save className="w-3 h-3" /> Save Task
+                        </button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const saved = await api.saveTask({ task: selectedTask });
+                              setSelectedTask(saved.task);
+                              setTaskYaml(saved.raw_yaml);
+                              setTasks(await api.listTasks());
+                              setStudioRightPanel("compiled");
+                              setActiveTab("studio");
+                              notify(`Selected '${saved.task.name}' for Deploy & Evaluate!`);
+                            } catch (err: unknown) {
+                              notify(err instanceof Error ? err.message : "Save failed", "err");
+                            }
+                          }}
+                          className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-semibold cursor-pointer"
+                          title="Save this task and open Tab 1 -> Compiled Files ready to click '2. Evaluate Project'"
+                        >
+                          Use in Deploy &amp; Evaluate <ArrowRight className="w-3 h-3" />
+                        </button>
+                      </div>
                     </div>
-                    <pre className="text-xs text-slate-200 whitespace-pre-wrap font-mono bg-slate-950 p-3 rounded-lg border border-slate-800">
-                      {selectedTask.prompt}
-                    </pre>
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">Task ID (Filename Slug)</label>
+                        <input
+                          value={selectedTask.id}
+                          onChange={(e) =>
+                            setSelectedTask({ ...selectedTask, id: e.target.value })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-cyan-300"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">Display Title</label>
+                        <input
+                          value={selectedTask.name}
+                          onChange={(e) =>
+                            setSelectedTask({ ...selectedTask, name: e.target.value })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-white font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">Category / Domain</label>
+                        <select
+                          value={selectedTask.category}
+                          onChange={(e) =>
+                            setSelectedTask({ ...selectedTask, category: e.target.value })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5"
+                        >
+                          <option value="frontend-ui">frontend-ui</option>
+                          <option value="feature">feature</option>
+                          <option value="bugfix">bugfix</option>
+                          <option value="refactor">refactor</option>
+                          <option value="security">security</option>
+                          <option value="test-writing">test-writing</option>
+                          <option value="business-analysis">business-analysis</option>
+                          <option value="product-management">product-management</option>
+                          <option value="consulting">consulting</option>
+                          <option value="custom">custom</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">Difficulty</label>
+                        <select
+                          value={selectedTask.difficulty}
+                          onChange={(e) =>
+                            setSelectedTask({
+                              ...selectedTask,
+                              difficulty: e.target.value as "easy" | "medium" | "hard",
+                            })
+                          }
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5"
+                        >
+                          <option value="easy">easy</option>
+                          <option value="medium">medium</option>
+                          <option value="hard">hard</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-0.5">Workspace Source</label>
+                        <input
+                          value={selectedTask.workspace_source}
+                          onChange={(e) =>
+                            setSelectedTask({ ...selectedTask, workspace_source: e.target.value })
+                          }
+                          placeholder="e.g. D:\Projects\my-app"
+                          className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px]"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-0.5">Description</label>
+                      <input
+                        value={selectedTask.description}
+                        onChange={(e) =>
+                          setSelectedTask({ ...selectedTask, description: e.target.value })
+                        }
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-[10px] text-slate-400">
+                          Expected Subagents (comma-separated)
+                        </label>
+                        {selectedBlueprint && (
+                          <button
+                            onClick={() =>
+                              setSelectedTask({
+                                ...selectedTask,
+                                expected_subagents: selectedBlueprint.subagents.map((s) => s.id),
+                              })
+                            }
+                            className="text-[10px] text-cyan-300 hover:text-cyan-200 cursor-pointer"
+                          >
+                            Sync from &ldquo;{selectedBlueprint.metadata.name}&rdquo;
+                          </button>
+                        )}
+                      </div>
+                      <input
+                        value={selectedTask.expected_subagents.join(", ")}
+                        onChange={(e) =>
+                          setSelectedTask({
+                            ...selectedTask,
+                            expected_subagents: e.target.value
+                              .split(",")
+                              .map((s) => s.trim())
+                              .filter(Boolean),
+                          })
+                        }
+                        placeholder="e.g. planner, coder, verifier"
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 font-mono text-[11px] text-cyan-200"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-slate-400 mb-0.5">
+                        Task Prompt Sent to Harness
+                      </label>
+                      <textarea
+                        rows={4}
+                        value={selectedTask.prompt}
+                        onChange={(e) =>
+                          setSelectedTask({ ...selectedTask, prompt: e.target.value })
+                        }
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 font-mono text-[11px] text-slate-200 leading-relaxed"
+                      />
+                    </div>
                   </div>
-                  <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-2">
+
+                  {/* Deterministic Outcome Verifiers Builder */}
+                  <div className="p-4 rounded-xl bg-slate-900 border border-slate-800 space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="text-xs font-bold uppercase text-emerald-400">
                         Deterministic Outcome Verifiers ({selectedTask.verifiers.length})
                       </div>
                       <span className="text-[10px] text-slate-400">
-                        Supports Code & No-Code BA/Doc Verifiers
+                        Code, UI, BA, PM &amp; Custom Verifiers
                       </span>
                     </div>
-                    {/* Quick Add No-Code BA & Document Verifiers */}
+
+                    {/* Quick Add Presets */}
                     <div className="flex flex-wrap gap-1.5 pb-2 border-b border-slate-800">
                       {[
                         {
-                          label: "+ Wikipedia User Story (3Cs + INVEST + BDD)",
-                          check: {
-                            id: `user_story_invest_${Date.now().toString().slice(-3)}`,
-                            name: "Wikipedia User Story Standard (3Cs + INVEST + Dev-QA BDD)",
-                            type: "user_story_invest_check",
-                            target_path: "EPICS_AND_USER_STORIES.md",
-                            weight: 2.0,
-                            required: true,
-                            timeout_seconds: 15,
-                          },
+                          label: "+ npm run build",
+                          check: { id: `npm_build_${Date.now().toString().slice(-3)}`, name: "Frontend Production Build (npm run build)", type: "command_exit_code", command: "npm run build", weight: 2.0, required: true, timeout_seconds: 90 },
+                        },
+                        {
+                          label: "+ npx tsc -b",
+                          check: { id: `tsc_${Date.now().toString().slice(-3)}`, name: "TypeScript Type-Check (npx tsc -b)", type: "command_exit_code", command: "npx tsc -b", weight: 1.5, required: true, timeout_seconds: 60 },
+                        },
+                        {
+                          label: "+ pytest -v",
+                          check: { id: `pytest_${Date.now().toString().slice(-3)}`, name: "Pytest Unit Test Suite", type: "pytest_pass", command: "pytest -v", weight: 2.0, required: true, timeout_seconds: 60 },
+                        },
+                        {
+                          label: "+ User Story (3Cs + INVEST + BDD)",
+                          check: { id: `user_story_invest_${Date.now().toString().slice(-3)}`, name: "User Story Standard (3Cs + INVEST + Dev-QA BDD)", type: "user_story_invest_check", target_path: "EPICS_AND_USER_STORIES.md", weight: 2.5, required: true, timeout_seconds: 15 },
                         },
                         {
                           label: "+ Required Markdown Sections",
-                          check: {
-                            id: `md_sections_${Date.now().toString().slice(-3)}`,
-                            name: "Required Specification Sections Present",
-                            type: "markdown_sections_present",
-                            target_path: "EPICS_AND_USER_STORIES.md",
-                            pattern: "Epics,User Stories,Conversation,Confirmation,INVEST,Traceability Matrix",
-                            weight: 1.5,
-                            required: true,
-                            timeout_seconds: 15,
-                          },
+                          check: { id: `md_sections_${Date.now().toString().slice(-3)}`, name: "Required Specification Sections Present", type: "markdown_sections_present", target_path: "EPICS_AND_USER_STORIES.md", pattern: "Epics,User Stories,Conversation,Confirmation,INVEST,Traceability Matrix", weight: 1.5, required: true, timeout_seconds: 15 },
                         },
                         {
-                          label: "+ Mermaid Workflow Validator",
-                          check: {
-                            id: `mermaid_valid_${Date.now().toString().slice(-3)}`,
-                            name: "Valid Mermaid Process & State Diagrams",
-                            type: "mermaid_diagram_valid",
-                            target_path: "WORKFLOWS_AND_DELIVERY_DOCS.md",
-                            weight: 1.5,
-                            required: true,
-                            timeout_seconds: 15,
-                          },
+                          label: "+ Mermaid Diagrams",
+                          check: { id: `mermaid_valid_${Date.now().toString().slice(-3)}`, name: "Valid Mermaid Process & State Diagrams", type: "mermaid_diagram_valid", target_path: "WORKFLOWS_AND_DELIVERY_DOCS.md", weight: 1.5, required: true, timeout_seconds: 15 },
                         },
                       ].map((btn) => (
                         <button
@@ -2901,7 +3250,7 @@ export default function App() {
                             setSelectedTask(saved.task);
                             setTaskYaml(saved.raw_yaml);
                             setTasks(await api.listTasks());
-                            notify(`Added '${btn.check.name}' verifier to task`);
+                            notify(`Added '${btn.check.name}' verifier`);
                           }}
                           className="px-2 py-1 rounded-lg bg-slate-950 hover:bg-indigo-950 border border-slate-700 hover:border-indigo-500 text-[10px] text-indigo-300 font-medium cursor-pointer"
                         >
@@ -2909,23 +3258,165 @@ export default function App() {
                         </button>
                       ))}
                     </div>
+
+                    {/* Custom Verifier Builder Form */}
+                    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2 text-xs">
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-300">
+                        + Add Custom Verifier Check
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          placeholder="Check Name (e.g. Vitest UI Tests)"
+                          value={newVerifierName}
+                          onChange={(e) => setNewVerifierName(e.target.value)}
+                          className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-[11px]"
+                        />
+                        <select
+                          value={newVerifierType}
+                          onChange={(e) => setNewVerifierType(e.target.value)}
+                          className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px] text-cyan-300"
+                        >
+                          <option value="command_exit_code">command_exit_code (CLI command)</option>
+                          <option value="pytest_pass">pytest_pass (pytest)</option>
+                          <option value="file_exists">file_exists</option>
+                          <option value="file_contains_regex">file_contains_regex</option>
+                          <option value="file_not_contains_regex">file_not_contains_regex</option>
+                          <option value="markdown_sections_present">markdown_sections_present</option>
+                          <option value="user_story_invest_check">user_story_invest_check</option>
+                          <option value="mermaid_diagram_valid">mermaid_diagram_valid</option>
+                          <option value="git_diff_contains">git_diff_contains</option>
+                          <option value="git_diff_max_lines">git_diff_max_lines</option>
+                        </select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {(newVerifierType === "command_exit_code" || newVerifierType === "pytest_pass") && (
+                          <input
+                            placeholder="Command (e.g. npm test or pytest -v)"
+                            value={newVerifierCommand}
+                            onChange={(e) => setNewVerifierCommand(e.target.value)}
+                            className="col-span-2 bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px]"
+                          />
+                        )}
+                        {["file_exists", "file_contains_regex", "file_not_contains_regex", "markdown_sections_present", "user_story_invest_check", "mermaid_diagram_valid"].includes(newVerifierType) && (
+                          <input
+                            placeholder="Target File (e.g. src/App.tsx or MEETING_SUMMARY.md)"
+                            value={newVerifierTargetPath}
+                            onChange={(e) => setNewVerifierTargetPath(e.target.value)}
+                            className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px]"
+                          />
+                        )}
+                        {["file_contains_regex", "file_not_contains_regex", "markdown_sections_present", "git_diff_contains"].includes(newVerifierType) && (
+                          <input
+                            placeholder="Regex or comma-separated headings"
+                            value={newVerifierPattern}
+                            onChange={(e) => setNewVerifierPattern(e.target.value)}
+                            className="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 font-mono text-[11px]"
+                          />
+                        )}
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-3 text-[11px] text-slate-300">
+                          <label className="flex items-center gap-1">
+                            Weight:
+                            <input
+                              type="number"
+                              step="0.5"
+                              min="0.5"
+                              max="5"
+                              value={newVerifierWeight}
+                              onChange={(e) => setNewVerifierWeight(Number(e.target.value) || 1)}
+                              className="w-14 bg-slate-900 border border-slate-800 rounded px-1.5 py-0.5 font-mono"
+                            />
+                          </label>
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={newVerifierRequired}
+                              onChange={(e) => setNewVerifierRequired(e.target.checked)}
+                            />
+                            Required
+                          </label>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            const checkId = `chk_${Date.now().toString().slice(-4)}`;
+                            const newCheck = {
+                              id: checkId,
+                              name: newVerifierName.trim() || `${newVerifierType} check`,
+                              type: newVerifierType,
+                              command: newVerifierCommand.trim() || null,
+                              target_path: newVerifierTargetPath.trim() || null,
+                              pattern: newVerifierPattern.trim() || null,
+                              max_lines: newVerifierType === "git_diff_max_lines" ? 150 : null,
+                              weight: newVerifierWeight,
+                              required: newVerifierRequired,
+                              timeout_seconds: 60,
+                            };
+                            const updatedTask: TaskSpec = {
+                              ...selectedTask,
+                              verifiers: [...selectedTask.verifiers, newCheck],
+                            };
+                            const saved = await api.saveTask({ task: updatedTask });
+                            setSelectedTask(saved.task);
+                            setTaskYaml(saved.raw_yaml);
+                            setTasks(await api.listTasks());
+                            setNewVerifierName("");
+                            setNewVerifierCommand("");
+                            setNewVerifierTargetPath("");
+                            setNewVerifierPattern("");
+                            notify(`Added custom verifier '${newCheck.name}'`);
+                          }}
+                          className="px-3 py-1 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-[11px] font-semibold cursor-pointer"
+                        >
+                          + Add Verifier
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Active Verifiers List */}
                     <div className="space-y-2">
                       {selectedTask.verifiers.map((v) => (
                         <div
                           key={v.id}
-                          className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between text-xs"
+                          className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 flex items-center justify-between gap-2 text-xs"
                         >
-                          <div>
-                            <div className="font-semibold text-white">{v.name}</div>
-                            <div className="font-mono text-[11px] text-slate-400">
+                          <div className="min-w-0">
+                            <div className="font-semibold text-white flex items-center gap-1.5">
+                              <span>{v.name}</span>
+                              {v.required && (
+                                <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-950 text-amber-300 border border-amber-800/50 uppercase">
+                                  Req
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-mono text-[11px] text-slate-400 truncate">
                               type: {v.type}{" "}
                               {v.target_path ? `| file: ${v.target_path} ` : ""}
-                              {v.command ? `| cmd: ${v.command}` : v.pattern ? `|sections/regex: ${v.pattern}` : ""}
+                              {v.command ? `| cmd: ${v.command}` : v.pattern ? `| pattern: ${v.pattern}` : ""}
                             </div>
                           </div>
-                          <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/40">
-                            Weight {v.weight}x
-                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[11px] px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/40">
+                              {v.weight}x
+                            </span>
+                            <button
+                              onClick={async () => {
+                                const updatedTask: TaskSpec = {
+                                  ...selectedTask,
+                                  verifiers: selectedTask.verifiers.filter((chk) => chk.id !== v.id),
+                                };
+                                const saved = await api.saveTask({ task: updatedTask });
+                                setSelectedTask(saved.task);
+                                setTaskYaml(saved.raw_yaml);
+                                setTasks(await api.listTasks());
+                                notify(`Removed verifier '${v.name}'`);
+                              }}
+                              className="text-slate-500 hover:text-rose-400 cursor-pointer"
+                              title="Remove verifier"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>

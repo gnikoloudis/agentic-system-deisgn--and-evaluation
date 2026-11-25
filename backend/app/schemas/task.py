@@ -66,7 +66,9 @@ class TaskSpec(BaseModel):
         "refactor",
         "security",
         "test-writing",
+        "frontend-ui",
         "business-analysis",
+        "product-management",
         "consulting",
         "custom",
     ] = Field(default="bugfix")

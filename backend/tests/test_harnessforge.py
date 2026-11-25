@@ -446,6 +446,72 @@ def test_issue_1_orphan_guardrail_removal_and_issue_2_agent_id_rename(tmp_path: 
     assert "allow_write: false" in proc_write.stderr
 
 
+def test_issue_3_create_deploy_evaluate_and_delete_custom_benchmark_task(client: TestClient, tmp_path: Path):
+    """Verify Issue #3: creating custom evaluation benchmark tasks for diverse agentic designs (e.g. product-management / frontend-ui) and evaluating a project against them."""
+    task_id = "test-pm-meeting-eval"
+    custom_task = {
+        "id": task_id,
+        "name": "PM Meeting Notes Synthesis Evaluation",
+        "category": "product-management",
+        "difficulty": "medium",
+        "description": "Verifies PM meeting synthesis deliverables.",
+        "prompt": "Synthesize meeting notes into MEETING_SUMMARY.md.",
+        "workspace_source": str(tmp_path),
+        "expected_subagents": ["meeting_analyst"],
+        "verifiers": [
+            {
+                "id": "summary_exists",
+                "name": "MEETING_SUMMARY.md exists",
+                "type": "file_exists",
+                "target_path": "MEETING_SUMMARY.md",
+                "weight": 1.0,
+                "required": True,
+                "timeout_seconds": 10,
+            },
+            {
+                "id": "pm_sections",
+                "name": "Required PM Sections Present",
+                "type": "markdown_sections_present",
+                "target_path": "MEETING_SUMMARY.md",
+                "pattern": "Executive Summary,Decisions,Action Items",
+                "weight": 2.0,
+                "required": True,
+                "timeout_seconds": 15,
+            },
+        ],
+        "tags": ["product-management", "no-code"],
+    }
+    try:
+        # 1. Create custom benchmark task via API
+        create_resp = client.post("/api/tasks", json={"task": custom_task})
+        assert create_resp.status_code == 200
+        assert create_resp.json()["task"]["id"] == task_id
+        assert create_resp.json()["task"]["category"] == "product-management"
+
+        # 2. Write deliverable in tmp_path and evaluate project folder using the new custom benchmark task
+        (tmp_path / "MEETING_SUMMARY.md").write_text(
+            "# Meeting Summary\n\n## Executive Summary\nAligned on Q4 launch.\n\n## Decisions\nApproved React 19 UI.\n\n## Action Items\n- Ship MVP.\n",
+            encoding="utf-8",
+        )
+        eval_resp = client.post(
+            "/api/runs/evaluate-directory",
+            json={
+                "project_directory": str(tmp_path),
+                "task_id": task_id,
+                "architecture_id": "solo-generalist",
+                "harness": "antigravity",
+            },
+        )
+        assert eval_resp.status_code == 200
+        ev = eval_resp.json()["evaluation"]
+        assert ev["deterministic_score"] == 100.0
+        assert ev["all_required_verifiers_passed"] is True
+    finally:
+        del_resp = client.delete(f"/api/tasks/{task_id}")
+        assert del_resp.status_code == 200
+        assert del_resp.json()["deleted"] is True
+
+
 
 
 
