@@ -7,7 +7,9 @@ Design multi-agent architectures visually (**React Flow**) or declaratively (`.y
 3. **Layer 3 — Qualitative Judge & Human Rating**: Structured dimension breakdown + side-by-side human rubric review.
 4. **Layer 4 — Side-by-Side A/B Matrix & AI Architecture Advisor**: Compare architectures or harnesses (`OpenCode` vs. `Antigravity` vs. `Claude Code`) side-by-side and generate one-click `v2` YAML diff upgrades.
 
-> **Full User Guide**: See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for a complete walkthrough of every studio tab, blueprint schema, and evaluation workflow.
+> **User Manuals**:
+> - **Non-Technical User Manual (BAs, PMs & Consultants)**: See [docs/NON_TECHNICAL_USER_MANUAL.md](docs/NON_TECHNICAL_USER_MANUAL.md) for a plain-English, zero-code guide to designing, testing, and improving AI teams visually.
+> - **Full Technical User Guide**: See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for a complete technical reference of every studio tab, blueprint schema, CLI command, and evaluation verifier.
 
 ---
 
