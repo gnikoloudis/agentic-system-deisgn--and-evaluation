@@ -1,0 +1,95 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: solo-generalist-custom
+  name: Solo Generalist Agent (Baseline) (Custom)
+  version: 1.0.0
+  description: Single autonomous root agent with direct read, write, and test execution permissions plus
+    a TDD verification skill. Ideal as a baseline for A/B benchmarking against multi-agent topologies.
+  tags:
+  - baseline
+  - single-agent
+  - low-latency
+  author: HarnessForge Presets
+orchestrator:
+  id: root_orchestrator
+  name: Solo Senior Engineer/Developer
+  role: Autonomous full-stack engineer handling exploration, coding, and testing directly
+  model: coding
+  harness_models: {}
+  system_prompt: 'You are an autonomous Principal Software Engineer.
+
+    Execute tasks efficiently by following a strict 3-step loop:
+
+    1. Explore: Read relevant source files and tests first.
+
+    2. Implement: Make minimal, surgical edits that fix the issue or add the feature.
+
+    3. Verify: Run the test suite using the `tdd-verify` skill before finishing.
+
+    '
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  - bash
+  permissions:
+    allow_shell: true
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  budgets:
+    max_turns: 25
+    max_cost_usd: 1.5
+    timeout_seconds: 300
+    context_compaction_threshold_pct: 80
+subagents: []
+skills:
+- id: tdd-verify
+  name: TDD Verification Runner
+  description: Run pytest unit tests before declaring a task complete
+  instructions: 'Always run `pytest -q` in the workspace root after editing files.
+
+    Do not complete your response until all tests pass with exit code 0.
+
+    '
+  source_dir: null
+  trigger_command: /tdd-verify
+commands: []
+hooks:
+- id: block_dangerous_shell
+  event: PreToolUse
+  matcher: Bash|run_command
+  target_agent: '*'
+  action: block
+  command: null
+  message: Destructive shell commands are prohibited inside the evaluation sandbox.
+mcp_servers: []
+topology:
+  pattern: solo
+  enforcement_mode: dual
+  entry_node: root_orchestrator
+  edges:
+  - id: e_skill_tdd
+    source: root_orchestrator
+    target: tdd-verify
+    condition: After modifying code
+    order: 1
+    required: true
+    max_loops: 3
+visual_layout:
+  nodes:
+    root_orchestrator:
+      x: -30.0
+      y: -276.0
+    tdd-verify:
+      x: -382.0
+      y: 74.0
+    block_dangerous_shell:
+      x: 328.0
+      y: -510.0
