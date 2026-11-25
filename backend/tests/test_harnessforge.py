@@ -552,6 +552,135 @@ def test_issue_4_mcp_server_assignments_and_three_harness_examples():
     assert oc_json["agent"]["data_engineer"]["tools"]["playwright*"] is False
 
 
+def test_issue_5_blocking_run_preflight_and_stale_cleanup(client: TestClient):
+    """Verify Issue #5: preliminary pre-flight checks, single-flight blocking concurrency guard, and stale evaluation cleanup."""
+    from app.db.database import save_run, utc_now_iso
+    from app.runner import executor
+    from app.schemas.evaluation import RunRecordSchema
+
+    # 1. Pre-flight check passes for valid blueprint & task
+    pf_ok = client.post(
+        "/api/runs/preflight",
+        json={
+            "architecture_id": "solo-generalist",
+            "task_id": "bugfix-auth-token",
+            "harness": "claude_code",
+            "mode": "simulated_benchmark",
+        },
+    )
+    assert pf_ok.status_code == 200
+    pf_ok_data = pf_ok.json()
+    assert pf_ok_data["ready"] is True
+    assert pf_ok_data["active_run_id"] is None
+    assert all(c["status"] != "fail" for c in pf_ok_data["checks"])
+
+    # 2. Pre-flight check fails for missing blueprint or missing task
+    pf_bad = client.post(
+        "/api/runs/preflight",
+        json={
+            "architecture_id": "nonexistent-arch-xyz",
+            "task_id": "nonexistent-task-xyz",
+            "harness": "claude_code",
+            "mode": "simulated_benchmark",
+        },
+    )
+    assert pf_bad.status_code == 200
+    pf_bad_data = pf_bad.json()
+    assert pf_bad_data["ready"] is False
+    failed_ids = {c["id"] for c in pf_bad_data["checks"] if c["status"] == "fail"}
+    assert "blueprint_valid" in failed_ids
+    assert "task_workspace" in failed_ids
+
+    # 3. Single-flight blocking concurrency lock returns 409 Conflict while another run is active
+    fake_active_id = "run-active-lock-test"
+    with executor._run_registry_lock:
+        executor._starting_run_ids.add(fake_active_id)
+    try:
+        active_resp = client.get("/api/runs/active")
+        assert active_resp.status_code == 200
+        assert active_resp.json()["has_active_run"] is True
+        assert active_resp.json()["active_run"]["id"] == fake_active_id
+
+        pf_blocked = client.post(
+            "/api/runs/preflight",
+            json={
+                "architecture_id": "solo-generalist",
+                "task_id": "bugfix-auth-token",
+                "harness": "claude_code",
+                "mode": "simulated_benchmark",
+            },
+        )
+        assert pf_blocked.status_code == 200
+        assert pf_blocked.json()["ready"] is False
+        assert pf_blocked.json()["active_run_id"] == fake_active_id
+
+        conflict_resp = client.post(
+            "/api/runs",
+            json={
+                "architecture_id": "solo-generalist",
+                "task_id": "bugfix-auth-token",
+                "harness": "claude_code",
+                "mode": "simulated_benchmark",
+                "auto_evaluate": False,
+            },
+        )
+        assert conflict_resp.status_code == 409
+        assert fake_active_id in conflict_resp.json()["detail"]
+
+        del_active_resp = client.delete(f"/api/runs/{fake_active_id}")
+        assert del_active_resp.status_code == 409
+    finally:
+        with executor._run_registry_lock:
+            executor._starting_run_ids.discard(fake_active_id)
+
+    assert client.get("/api/runs/active").json()["has_active_run"] is False
+
+    # 4. Stale evaluation detection & cleanup (orphaned 'running' + 'cancelled' without evaluation)
+    stale_running = RunRecordSchema(
+        id="deploy-stale-running-1",
+        architecture_id="solo-generalist",
+        architecture_name="Solo Generalist",
+        architecture_version="1.0.0",
+        task_id="bugfix-auth-token",
+        task_name="Stale Running Task",
+        harness="claude_code",
+        mode="simulated_benchmark",
+        status="running",
+        sandbox_path="",
+        cli_command="claude",
+        started_at=utc_now_iso(),
+    )
+    stale_cancelled = RunRecordSchema(
+        id="deploy-stale-cancelled-2",
+        architecture_id="solo-generalist",
+        architecture_name="Solo Generalist",
+        architecture_version="1.0.0",
+        task_id="bugfix-auth-token",
+        task_name="Stale Cancelled Task",
+        harness="claude_code",
+        mode="simulated_benchmark",
+        status="cancelled",
+        sandbox_path="",
+        cli_command="claude",
+        started_at=utc_now_iso(),
+    )
+    save_run(stale_running)
+    save_run(stale_cancelled)
+
+    clear_resp = client.delete("/api/runs/stale")
+    assert clear_resp.status_code == 200
+    clear_data = clear_resp.json()
+    assert "deploy-stale-running-1" in clear_data["cleared_run_ids"]
+    assert "deploy-stale-cancelled-2" in clear_data["cleared_run_ids"]
+    assert clear_data["cleared_count"] >= 2
+
+    # 5. Idempotent DELETE on already-missing stale run ID returns 200 (no 404 trap)
+    ghost_del = client.delete("/api/runs/deploy-4c3e26a8")
+    assert ghost_del.status_code == 200
+    assert ghost_del.json()["deleted"] is False
+    assert ghost_del.json()["already_missing"] is True
+
+
 
 
 

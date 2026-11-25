@@ -12,12 +12,14 @@ import {
   FolderOutput,
   GitCompare,
   Layers,
+  Loader2,
   Pencil,
   Play,
   Plus,
   RefreshCw,
   Save,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Terminal,
   Trash2,
@@ -33,6 +35,7 @@ import type {
   CompilationResult,
   HarnessModelsConfig,
   HarnessType,
+  PreflightCheckResponse,
   RunMode,
   RunRecord,
   SubagentSpec,
@@ -119,8 +122,24 @@ export default function App() {
   const [telemetryEvents, setTelemetryEvents] = useState<TelemetryEvent[]>([]);
   const [activeAgentNode, setActiveAgentNode] = useState<string | null>(null);
   const [isLaunchingRun, setIsLaunchingRun] = useState(false);
+  const [isStoppingRun, setIsStoppingRun] = useState(false);
+  const [isClearingStale, setIsClearingStale] = useState(false);
+  const [preflight, setPreflight] = useState<PreflightCheckResponse | null>(null);
+  const [isCheckingPreflight, setIsCheckingPreflight] = useState(false);
   const [traceViewMode, setTraceViewMode] = useState<"cards" | "console_log">("cards");
   const [plainTextLog, setPlainTextLog] = useState<string>("");
+  const runPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const isRunStatusActive = (status?: string | null) =>
+    status === "preparing_sandbox" || status === "running" || status === "evaluating";
+
+  const isRunStale = (r: RunRecord) =>
+    (r.status === "cancelled" || r.status === "failed") && !r.evaluation;
+
+  const runningRun =
+    runs.find((r) => isRunStatusActive(r.status)) ||
+    (activeRun && isRunStatusActive(activeRun.status) ? activeRun : null);
+  const isRunBlocking = isLaunchingRun || Boolean(runningRun);
 
   // A/B Compare & Advisor state
   const [compareIds, setCompareIds] = useState<string[]>([]);
@@ -135,14 +154,93 @@ export default function App() {
     setTimeout(() => setStatusBanner(null), 4500);
   };
 
+  const stopRunPolling = useCallback(() => {
+    if (runPollRef.current) {
+      clearInterval(runPollRef.current);
+      runPollRef.current = null;
+    }
+  }, []);
+
+  const refreshPreflight = useCallback(async () => {
+    if (!selectedBlueprint || !selectedTask) return;
+    setIsCheckingPreflight(true);
+    try {
+      const res = await api.runPreflightChecks({
+        architecture_id: selectedBlueprint.metadata.id,
+        task_id: selectedTask.id,
+        harness: runHarness,
+        mode: runMode,
+      });
+      setPreflight(res);
+    } catch {
+      // ignore transient errors
+    } finally {
+      setIsCheckingPreflight(false);
+    }
+  }, [selectedBlueprint, selectedTask, runHarness, runMode]);
+
+  const startRunPolling = useCallback(
+    (runId: string) => {
+      stopRunPolling();
+      runPollRef.current = setInterval(async () => {
+        try {
+          const [evts, currentRun, logRes] = await Promise.all([
+            api.getTelemetryEvents(runId),
+            api.getRun(runId),
+            api.getRunLog(runId),
+          ]);
+          setTelemetryEvents(evts);
+          setPlainTextLog(logRes.log);
+          if (evts.length > 0) {
+            setActiveAgentNode(evts[evts.length - 1].agent_id);
+          }
+          setActiveRun(currentRun);
+          setRuns((prev) => {
+            const exists = prev.some((r) => r.id === currentRun.id);
+            return exists
+              ? prev.map((r) => (r.id === currentRun.id ? currentRun : r))
+              : [currentRun, ...prev];
+          });
+          if (
+            currentRun.status === "completed" ||
+            currentRun.status === "failed" ||
+            currentRun.status === "cancelled" ||
+            currentRun.status === "waiting_for_user"
+          ) {
+            stopRunPolling();
+            const allRuns = await api.listRuns();
+            setRuns(allRuns);
+            if (currentRun.status === "completed") {
+              notify(
+                `Run ${currentRun.id} completed! Score: ${currentRun.evaluation?.overall_composite_score ?? "--"}/100`
+              );
+            } else if (currentRun.status === "failed") {
+              notify(`Run ${currentRun.id} failed: ${currentRun.error_message || "Unknown error"}`, "err");
+            }
+          }
+        } catch {
+          stopRunPolling();
+          const allRuns = await api.listRuns().catch(() => null);
+          if (allRuns) setRuns(allRuns);
+        }
+      }, 400);
+    },
+    [stopRunPolling]
+  );
+
+  useEffect(() => {
+    return () => stopRunPolling();
+  }, [stopRunPolling]);
+
   const loadInitialData = useCallback(async () => {
     try {
-      const [bps, tks, rns, hStatus, hModels] = await Promise.all([
+      const [bps, tks, rns, hStatus, hModels, activeStatus] = await Promise.all([
         api.listBlueprints(),
         api.listTasks(),
         api.listRuns(),
         api.getHarnessStatus(),
         api.getHarnessModels(),
+        api.getActiveRun().catch(() => ({ has_active_run: false, active_run: null })),
       ]);
       setBlueprints(bps);
       setTasks(tks);
@@ -161,18 +259,28 @@ export default function App() {
         setSelectedTask(fullTask.task);
         setTaskYaml(fullTask.raw_yaml);
       }
-      if (rns.length > 0) {
+      if (activeStatus.has_active_run && activeStatus.active_run) {
+        setActiveRun(activeStatus.active_run);
+        startRunPolling(activeStatus.active_run.id);
+      } else if (rns.length > 0) {
         setActiveRun(rns[0]);
         setCompareIds(rns.slice(0, 2).map((r) => r.id));
       }
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : "Failed to connect to backend", "err");
     }
-  }, []);
+  }, [startRunPolling]);
 
   useEffect(() => {
     loadInitialData();
   }, [loadInitialData]);
+
+  // Auto-refresh preflight checks when on Execute & Trace tab or launch configuration changes
+  useEffect(() => {
+    if (activeTab === "runner" && selectedBlueprint && selectedTask) {
+      refreshPreflight();
+    }
+  }, [activeTab, selectedBlueprint?.metadata.id, selectedTask?.id, runHarness, runMode, runs.length, isRunBlocking, refreshPreflight]);
 
   // Debounced live compiled preview whenever selected blueprint or target harness changes
   useEffect(() => {
@@ -196,16 +304,46 @@ export default function App() {
     };
   }, [selectedBlueprint, previewHarness]);
 
-  // Load telemetry events when activeRun changes
+  // Load telemetry events when activeRun changes; auto-prune ghost/stale runs that return 404
   useEffect(() => {
     if (!activeRun) return;
-    api.getTelemetryEvents(activeRun.id).then((evts) => {
-      setTelemetryEvents(evts);
-      const lastAgent = [...evts].reverse().find((e) => e.agent_id)?.agent_id || null;
-      setActiveAgentNode(lastAgent);
-    });
-    api.getRunLog(activeRun.id).then((res) => setPlainTextLog(res.log)).catch(() => { });
-  }, [activeRun]);
+    let cancelled = false;
+    api
+      .getTelemetryEvents(activeRun.id)
+      .then((evts) => {
+        if (cancelled) return;
+        setTelemetryEvents(evts);
+        const lastAgent = [...evts].reverse().find((e) => e.agent_id)?.agent_id || null;
+        setActiveAgentNode(lastAgent);
+      })
+      .catch(() => { });
+    api
+      .getRunLog(activeRun.id)
+      .then((res) => {
+        if (!cancelled) setPlainTextLog(res.log);
+      })
+      .catch(async (err: unknown) => {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : "";
+        if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
+          const staleId = activeRun.id;
+          const freshRuns = await api.listRuns().catch(() => runs.filter((r) => r.id !== staleId));
+          if (cancelled) return;
+          setRuns(freshRuns);
+          setCompareIds((prev) => prev.filter((id) => id !== staleId));
+          const nextRun = freshRuns[0] || null;
+          setActiveRun(nextRun);
+          if (!nextRun) {
+            setTelemetryEvents([]);
+            setPlainTextLog("");
+          }
+          notify(`Removed stale evaluation '${staleId}' (no longer exists on server).`);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeRun?.id]);
 
   const handleSelectBlueprint = async (id: string) => {
     try {
@@ -516,9 +654,37 @@ export default function App() {
 
   const handleStartRun = async () => {
     if (!selectedBlueprint || !selectedTask) return;
+    if (isRunBlocking) {
+      notify(
+        `An evaluation run (${runningRun?.id || "in progress"}) is already running. Wait for it to finish or stop it first.`,
+        "err"
+      );
+      setActiveTab("runner");
+      return;
+    }
+
     setIsLaunchingRun(true);
     try {
       await handleSaveBlueprint(false);
+
+      // Run preliminary pre-flight checks before launching
+      const pf = await api.runPreflightChecks({
+        architecture_id: selectedBlueprint.metadata.id,
+        task_id: selectedTask.id,
+        harness: runHarness,
+        mode: runMode,
+      });
+      setPreflight(pf);
+      if (!pf.ready) {
+        const firstFail = pf.checks.find((c) => c.status === "fail");
+        setActiveTab("runner");
+        notify(
+          `Pre-flight check failed (${firstFail?.name || "Validation"}): ${firstFail?.message || "Resolve blocking issues before running."}`,
+          "err"
+        );
+        return;
+      }
+
       const started = await api.startRun({
         architecture_id: selectedBlueprint.metadata.id,
         task_id: selectedTask.id,
@@ -526,44 +692,68 @@ export default function App() {
         mode: runMode,
         auto_evaluate: true,
       });
+      setRuns((prev) => [started, ...prev.filter((r) => r.id !== started.id)]);
       setActiveRun(started);
       setActiveTab("runner");
       setTelemetryEvents([]);
-
-      // Poll live events & status until completion
-      const pollInterval = setInterval(async () => {
-        try {
-          const [evts, currentRun, logRes] = await Promise.all([
-            api.getTelemetryEvents(started.id),
-            api.getRun(started.id),
-            api.getRunLog(started.id),
-          ]);
-          setTelemetryEvents(evts);
-          setPlainTextLog(logRes.log);
-          if (evts.length > 0) {
-            setActiveAgentNode(evts[evts.length - 1].agent_id);
-          }
-          setActiveRun(currentRun);
-          if (
-            currentRun.status === "completed" ||
-            currentRun.status === "failed" ||
-            currentRun.status === "waiting_for_user"
-          ) {
-            clearInterval(pollInterval);
-            const allRuns = await api.listRuns();
-            setRuns(allRuns);
-            if (currentRun.status === "completed") {
-              notify(`Run ${currentRun.id} completed! Score: ${currentRun.evaluation?.overall_composite_score ?? "--"}/100`);
-            }
-          }
-        } catch {
-          clearInterval(pollInterval);
-        }
-      }, 350);
+      setPlainTextLog("");
+      startRunPolling(started.id);
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : "Failed to start run", "err");
+      await refreshPreflight();
     } finally {
       setIsLaunchingRun(false);
+    }
+  };
+
+  const handleStopActiveRun = async (runId: string) => {
+    if (isStoppingRun) return;
+    setIsStoppingRun(true);
+    try {
+      stopRunPolling();
+      const stopped = await api.stopRun(runId, true);
+      setActiveRun(stopped);
+      const allRuns = await api.listRuns();
+      setRuns(allRuns);
+      notify(`Stopped run ${runId} and evaluated current sandbox outputs`);
+      await refreshPreflight();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to stop run", "err");
+    } finally {
+      setIsStoppingRun(false);
+    }
+  };
+
+  const handleClearStaleRuns = async () => {
+    if (isRunBlocking || isClearingStale) return;
+    setIsClearingStale(true);
+    try {
+      const res = await api.clearStaleRuns();
+      const freshRuns = await api.listRuns();
+      setRuns(freshRuns);
+      const clearedSet = new Set(res.cleared_run_ids);
+      setCompareIds((prev) => prev.filter((id) => !clearedSet.has(id)));
+      if (activeRun && (clearedSet.has(activeRun.id) || !freshRuns.some((r) => r.id === activeRun.id))) {
+        const nextRun = freshRuns[0] || null;
+        setActiveRun(nextRun);
+        if (!nextRun) {
+          setTelemetryEvents([]);
+          setPlainTextLog("");
+        }
+      }
+      if (res.cleared_count > 0 || res.removed_orphan_sandboxes > 0) {
+        notify(
+          `Cleared ${res.cleared_count} stale evaluation(s)` +
+            (res.removed_orphan_sandboxes > 0 ? ` and ${res.removed_orphan_sandboxes} orphaned sandbox folder(s)` : "")
+        );
+      } else {
+        notify("Execution history synced — no stale evaluations found.");
+      }
+      await refreshPreflight();
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to clear stale evaluations", "err");
+    } finally {
+      setIsClearingStale(false);
     }
   };
 
@@ -836,11 +1026,26 @@ export default function App() {
           </select>
           <button
             onClick={handleStartRun}
-            disabled={isLaunchingRun || !selectedBlueprint || !selectedTask}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-semibold text-xs shadow-sm cursor-pointer"
+            disabled={isRunBlocking || !selectedBlueprint || !selectedTask}
+            title={
+              isRunBlocking
+                ? `Blocked: run ${runningRun?.id || ""} is currently in progress`
+                : "Run pre-flight checks, deploy to sandbox, and evaluate"
+            }
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-xs shadow-sm cursor-pointer"
           >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            {isLaunchingRun ? "Deploying..." : "Deploy & Evaluate"}
+            {isRunBlocking ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Play className="w-3.5 h-3.5 fill-current" />
+            )}
+            {isLaunchingRun
+              ? "Running Pre-Flight..."
+              : runningRun
+                ? runningRun.status === "evaluating"
+                  ? "Evaluating..."
+                  : "Evaluation Running..."
+                : "Deploy & Evaluate"}
           </button>
         </div>
       </header>
@@ -4003,15 +4208,23 @@ export default function App() {
             {/* Left Launchpad & Run History */}
             <aside className="w-80 border-r border-slate-800 bg-slate-900/60 p-4 flex flex-col gap-4 overflow-y-auto shrink-0">
               <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
-                <div className="text-xs font-bold uppercase tracking-wider text-indigo-400">
-                  Launch Isolated Sandbox Run
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold uppercase tracking-wider text-indigo-400">
+                    Launch Isolated Sandbox Run
+                  </div>
+                  {isRunBlocking && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-bold uppercase">
+                      <Loader2 className="w-2.5 h-2.5 animate-spin" /> Locked
+                    </span>
+                  )}
                 </div>
                 <div>
                   <label className="block text-[11px] text-slate-400 mb-1">Architecture Blueprint</label>
                   <select
                     value={selectedBlueprint?.metadata.id || ""}
+                    disabled={isRunBlocking}
                     onChange={(e) => handleSelectBlueprint(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {blueprints.map((b) => (
                       <option key={b.metadata.id} value={b.metadata.id}>
@@ -4025,12 +4238,13 @@ export default function App() {
                   <label className="block text-[11px] text-slate-400 mb-1">Benchmark Task</label>
                   <select
                     value={selectedTask?.id || ""}
+                    disabled={isRunBlocking}
                     onChange={async (e) => {
                       const res = await api.getTask(e.target.value);
                       setSelectedTask(res.task);
                       setTaskYaml(res.raw_yaml);
                     }}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {tasks.map((t) => (
                       <option key={t.id} value={t.id}>
@@ -4044,8 +4258,9 @@ export default function App() {
                   <label className="block text-[11px] text-slate-400 mb-1">Target Coding Harness</label>
                   <select
                     value={runHarness}
+                    disabled={isRunBlocking}
                     onChange={(e) => setRunHarness(e.target.value as HarnessType)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <option value="claude_code">
                       Claude Code ({harnessStatus.claude_code?.available ? "CLI Detected" : "Sandbox Sim Ready"})
@@ -4063,8 +4278,9 @@ export default function App() {
                   <label className="block text-[11px] text-slate-400 mb-1">Execution Mode</label>
                   <select
                     value={runMode}
+                    disabled={isRunBlocking}
                     onChange={(e) => setRunMode(e.target.value as RunMode)}
-                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                    className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <option value="simulated_benchmark">
                       Simulated Sandbox Benchmark (Fast Topology Test)
@@ -4078,42 +4294,130 @@ export default function App() {
                   </select>
                 </div>
 
+                {/* Preliminary Pre-Flight Checks Panel */}
+                <div className="p-2.5 rounded-lg bg-slate-900/90 border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-200">
+                      <ShieldCheck className="w-3.5 h-3.5 text-cyan-400" />
+                      Pre-Flight Checks
+                      {preflight && (
+                        <span
+                          className={`px-1.5 py-0.2 rounded text-[9px] font-bold uppercase ${
+                            preflight.ready
+                              ? "bg-emerald-950 text-emerald-300 border border-emerald-700/50"
+                              : "bg-rose-950 text-rose-300 border border-rose-700/50"
+                          }`}
+                        >
+                          {preflight.ready ? "Ready" : "Blocked"}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => refreshPreflight()}
+                      disabled={isCheckingPreflight}
+                      className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-cyan-300 cursor-pointer disabled:opacity-50"
+                      title="Re-run preliminary checks"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isCheckingPreflight ? "animate-spin" : ""}`} />
+                      Re-check
+                    </button>
+                  </div>
+                  {preflight ? (
+                    <div className="space-y-1">
+                      {preflight.checks.map((chk) => (
+                        <div key={chk.id} className="flex items-start gap-1.5 text-[10px] leading-snug">
+                          {chk.status === "pass" ? (
+                            <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />
+                          ) : chk.status === "warn" ? (
+                            <AlertTriangle className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
+                          ) : (
+                            <XCircle className="w-3 h-3 text-rose-400 shrink-0 mt-0.5" />
+                          )}
+                          <div className="min-w-0">
+                            <span
+                              className={
+                                chk.status === "fail"
+                                  ? "text-rose-300 font-semibold"
+                                  : chk.status === "warn"
+                                    ? "text-amber-200"
+                                    : "text-slate-300"
+                              }
+                            >
+                              {chk.message}
+                            </span>
+                            {chk.detail && (
+                              <div className="text-[9px] text-slate-500 break-words">{chk.detail}</div>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-[10px] text-slate-500">Checking environment readiness...</div>
+                  )}
+                </div>
+
                 <button
                   onClick={handleStartRun}
-                  disabled={isLaunchingRun}
-                  className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs cursor-pointer"
+                  disabled={isRunBlocking || (preflight !== null && !preflight.ready)}
+                  className="w-full flex items-center justify-center gap-2 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-800 disabled:text-slate-400 disabled:cursor-not-allowed text-white font-semibold text-xs cursor-pointer"
                 >
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  {isLaunchingRun ? "Deploying to Git Sandbox..." : "Start Execution Run"}
+                  {isRunBlocking ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Play className="w-3.5 h-3.5 fill-current" />
+                  )}
+                  {isLaunchingRun
+                    ? "Running Pre-Flight & Deploying..."
+                    : runningRun
+                      ? runningRun.status === "evaluating"
+                        ? "Evaluating in Progress (Blocked)..."
+                        : "Execution Running (Blocked)..."
+                      : preflight && !preflight.ready
+                        ? "Fix Pre-Flight Checks to Run"
+                        : "Start Execution Run"}
                 </button>
               </div>
 
               {/* Run History List */}
               <div className="space-y-1.5">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-1">
                   <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
                     Execution History ({runs.length})
                   </div>
                   {runs.length > 0 && (
-                    <button
-                      onClick={async () => {
-                        try {
-                          const res = await api.deleteAllRuns();
-                          setRuns([]);
-                          setActiveRun(null);
-                          setTelemetryEvents([]);
-                          setPlainTextLog("");
-                          setCompareIds([]);
-                          notify(`Cleared all ${res.deleted_count} execution run(s) from history`);
-                        } catch (err: unknown) {
-                          notify(err instanceof Error ? err.message : "Failed to clear history", "err");
-                        }
-                      }}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/70 hover:bg-rose-900 border border-rose-800/60 text-rose-300 text-[10px] font-semibold cursor-pointer"
-                      title="Delete all execution history"
-                    >
-                      <Trash2 className="w-3 h-3" /> Clear All
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={handleClearStaleRuns}
+                        disabled={isRunBlocking || isClearingStale}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-950/70 hover:bg-amber-900 border border-amber-800/60 text-amber-300 text-[10px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Clear stale, interrupted, or orphaned evaluations"
+                      >
+                        <RefreshCw className={`w-2.5 h-2.5 ${isClearingStale ? "animate-spin" : ""}`} />
+                        Clear Stale
+                      </button>
+                      <button
+                        disabled={isRunBlocking}
+                        onClick={async () => {
+                          try {
+                            const res = await api.deleteAllRuns();
+                            setRuns([]);
+                            setActiveRun(null);
+                            setTelemetryEvents([]);
+                            setPlainTextLog("");
+                            setCompareIds([]);
+                            notify(`Cleared all ${res.deleted_count} execution run(s) from history`);
+                            await refreshPreflight();
+                          } catch (err: unknown) {
+                            notify(err instanceof Error ? err.message : "Failed to clear history", "err");
+                          }
+                        }}
+                        className="flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/70 hover:bg-rose-900 border border-rose-800/60 text-rose-300 text-[10px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                        title="Delete all execution history"
+                      >
+                        <Trash2 className="w-3 h-3" /> Clear All
+                      </button>
+                    </div>
                   )}
                 </div>
                 {runs.map((r) => (
@@ -4133,11 +4437,17 @@ export default function App() {
                             {r.evaluation.overall_composite_score.toFixed(1)}
                           </span>
                         )}
+                        {isRunStale(r) && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-700/50 uppercase font-bold">
+                            Stale
+                          </span>
+                        )}
                         <button
+                          disabled={isRunBlocking && isRunStatusActive(r.status)}
                           onClick={async (e) => {
                             e.stopPropagation();
                             try {
-                              await api.deleteRun(r.id);
+                              const res = await api.deleteRun(r.id);
                               const remaining = runs.filter((item) => item.id !== r.id);
                               setRuns(remaining);
                               setCompareIds((prev) => prev.filter((id) => id !== r.id));
@@ -4148,13 +4458,37 @@ export default function App() {
                                   setPlainTextLog("");
                                 }
                               }
-                              notify(`Deleted run ${r.id}`);
+                              notify(
+                                res.already_missing
+                                  ? `Cleared stale entry ${r.id} (already removed on server)`
+                                  : `Deleted run ${r.id}`
+                              );
+                              await refreshPreflight();
                             } catch (err: unknown) {
-                              notify(err instanceof Error ? err.message : "Failed to delete run", "err");
+                              const msg = err instanceof Error ? err.message : "";
+                              if (msg.toLowerCase().includes("not found") || msg.includes("404")) {
+                                const remaining = runs.filter((item) => item.id !== r.id);
+                                setRuns(remaining);
+                                setCompareIds((prev) => prev.filter((id) => id !== r.id));
+                                if (activeRun?.id === r.id) {
+                                  setActiveRun(remaining[0] || null);
+                                  if (!remaining[0]) {
+                                    setTelemetryEvents([]);
+                                    setPlainTextLog("");
+                                  }
+                                }
+                                notify(`Cleared stale entry ${r.id}`);
+                              } else {
+                                notify(msg || "Failed to delete run", "err");
+                              }
                             }
                           }}
-                          className="p-1 rounded hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
-                          title={`Delete run ${r.id}`}
+                          className="p-1 rounded hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                          title={
+                            isRunStatusActive(r.status)
+                              ? "Stop this run before deleting"
+                              : `Delete run ${r.id}`
+                          }
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -4166,7 +4500,7 @@ export default function App() {
                       <span
                         className={`uppercase font-semibold ${r.status === "completed"
                           ? "text-emerald-400"
-                          : r.status === "running"
+                          : isRunStatusActive(r.status)
                             ? "text-amber-300 animate-pulse"
                             : r.status === "failed"
                               ? "text-rose-400"
@@ -4183,6 +4517,40 @@ export default function App() {
 
             {/* Right: Live Topology Execution & Telemetry Stream */}
             <div className="flex-1 flex flex-col overflow-hidden">
+              {/* Blocking Execution Status Banner */}
+              {isRunBlocking && (
+                <div className="px-4 py-2.5 bg-amber-950/80 border-b border-amber-700/70 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-2.5 text-xs text-amber-100">
+                    <Loader2 className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+                    <div>
+                      <span className="font-bold text-amber-300 uppercase tracking-wide">
+                        Blocking Evaluation In Progress
+                      </span>{" "}
+                      —{" "}
+                      {runningRun ? (
+                        <>
+                          <span className="font-mono text-amber-200">{runningRun.id}</span> (
+                          <span className="uppercase font-semibold">{runningRun.status}</span>)
+                          {" • "}New runs are locked until this evaluation completes or is stopped.
+                        </>
+                      ) : (
+                        "Running pre-flight checks and preparing isolated Git sandbox..."
+                      )}
+                    </div>
+                  </div>
+                  {runningRun && (
+                    <button
+                      onClick={() => handleStopActiveRun(runningRun.id)}
+                      disabled={isStoppingRun}
+                      className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-semibold text-xs shrink-0 cursor-pointer"
+                    >
+                      <XCircle className="w-3.5 h-3.5" />
+                      {isStoppingRun ? "Stopping..." : "Stop & Evaluate Now"}
+                    </button>
+                  )}
+                </div>
+              )}
+
               {activeRun ? (
                 <>
                   <div className="p-4 border-b border-slate-800 bg-slate-900/70 flex items-center justify-between">
@@ -4204,22 +4572,14 @@ export default function App() {
                     </div>
 
                     <div className="flex items-center gap-2">
-                      {activeRun.status === "running" && (
+                      {isRunStatusActive(activeRun.status) && (
                         <button
-                          onClick={async () => {
-                            try {
-                              const stopped = await api.stopRun(activeRun.id, true);
-                              setActiveRun(stopped);
-                              setRuns(await api.listRuns());
-                              notify(`Stopped run ${activeRun.id} and evaluated current sandbox outputs`);
-                            } catch (err: unknown) {
-                              notify(err instanceof Error ? err.message : "Failed to stop run", "err");
-                            }
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs cursor-pointer"
+                          onClick={() => handleStopActiveRun(activeRun.id)}
+                          disabled={isStoppingRun}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white font-semibold text-xs cursor-pointer"
                         >
                           <XCircle className="w-3.5 h-3.5" />
-                          Stop & Evaluate Now
+                          {isStoppingRun ? "Stopping..." : "Stop & Evaluate Now"}
                         </button>
                       )}
                       {activeRun.status === "waiting_for_user" && (

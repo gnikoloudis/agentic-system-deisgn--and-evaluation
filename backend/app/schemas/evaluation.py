@@ -235,3 +235,36 @@ class ABComparisonResponse(BaseModel):
     winner_run_id: Optional[str] = None
     comparison_matrix: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
     key_takeaways: List[str] = Field(default_factory=list)
+
+
+class PreflightCheckItem(BaseModel):
+    id: str
+    name: str
+    status: Literal["pass", "warn", "fail"]
+    message: str
+    detail: Optional[str] = None
+
+
+class PreflightCheckRequest(BaseModel):
+    architecture_id: str
+    task_id: str
+    harness: HarnessType = "claude_code"
+    mode: RunMode = "simulated_benchmark"
+
+
+class PreflightCheckResponse(BaseModel):
+    ready: bool
+    checks: List[PreflightCheckItem] = Field(default_factory=list)
+    active_run_id: Optional[str] = None
+    stale_run_count: int = 0
+
+
+class ActiveRunStatusResponse(BaseModel):
+    has_active_run: bool
+    active_run: Optional[RunRecordSchema] = None
+
+
+class ClearStaleRunsResponse(BaseModel):
+    cleared_count: int
+    cleared_run_ids: List[str] = Field(default_factory=list)
+    removed_orphan_sandboxes: int = 0

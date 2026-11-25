@@ -357,3 +357,29 @@ export interface ABComparisonResponse {
   comparison_matrix: Record<string, Record<string, unknown>>;
   key_takeaways: string[];
 }
+
+export interface PreflightCheckItem {
+  id: string;
+  name: string;
+  status: "pass" | "warn" | "fail";
+  message: string;
+  detail?: string | null;
+}
+
+export interface PreflightCheckResponse {
+  ready: boolean;
+  checks: PreflightCheckItem[];
+  active_run_id?: string | null;
+  stale_run_count: number;
+}
+
+export interface ActiveRunStatusResponse {
+  has_active_run: boolean;
+  active_run?: RunRecord | null;
+}
+
+export interface ClearStaleRunsResponse {
+  cleared_count: number;
+  cleared_run_ids: string[];
+  removed_orphan_sandboxes: number;
+}

@@ -215,6 +215,17 @@ def list_runs(
         return [_row_to_run(r) for r in rows]
 
 
+def list_runs_by_statuses(statuses: List[str], limit: int = 100) -> List[RunRecordSchema]:
+    if not statuses:
+        return []
+    placeholders = ",".join("?" for _ in statuses)
+    query = f"SELECT * FROM runs WHERE status IN ({placeholders}) ORDER BY started_at DESC LIMIT ?"
+    params: List[Any] = [*statuses, limit]
+    with get_conn() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+        return [_row_to_run(r) for r in rows]
+
+
 def delete_run(run_id: str) -> bool:
     with get_conn() as conn:
         conn.execute("DELETE FROM telemetry_events WHERE run_id = ?", (run_id,))

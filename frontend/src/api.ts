@@ -1,11 +1,14 @@
 import type {
   ABComparisonResponse,
+  ActiveRunStatusResponse,
   AdvisorSuggestion,
   AgentArchitecture,
+  ClearStaleRunsResponse,
   CompilationResult,
   EvaluationReport,
   HarnessModelsConfig,
   HarnessType,
+  PreflightCheckResponse,
   RunMode,
   RunRecord,
   TaskSpec,
@@ -130,6 +133,18 @@ export const api = {
   syncHarnessModelsFromCli: () =>
     request<HarnessModelsConfig>("/runs/harnesses/models/sync", { method: "POST" }),
   listRuns: () => request<RunRecord[]>("/runs"),
+  getActiveRun: () => request<ActiveRunStatusResponse>("/runs/active"),
+  runPreflightChecks: (payload: {
+    architecture_id: string;
+    task_id: string;
+    harness: HarnessType;
+    mode: RunMode;
+  }) =>
+    request<PreflightCheckResponse>("/runs/preflight", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  clearStaleRuns: () => request<ClearStaleRunsResponse>("/runs/stale", { method: "DELETE" }),
   getRun: (runId: string) => request<RunRecord>(`/runs/${runId}`),
   startRun: (payload: {
     architecture_id: string;
@@ -149,7 +164,8 @@ export const api = {
     request<RunRecord>(`/runs/${runId}/stop?evaluate=${evaluate}`, { method: "POST" }),
   getTelemetryEvents: (runId: string) => request<TelemetryEvent[]>(`/runs/${runId}/telemetry`),
   getRunLog: (runId: string) => request<{ run_id: string; log: string }>(`/runs/${runId}/log`),
-  deleteRun: (runId: string) => request<{ deleted: boolean; id: string }>(`/runs/${runId}`, { method: "DELETE" }),
+  deleteRun: (runId: string) =>
+    request<{ deleted: boolean; already_missing?: boolean; id: string }>(`/runs/${runId}`, { method: "DELETE" }),
   deleteAllRuns: () => request<{ deleted_all: boolean; deleted_count: number }>("/runs", { method: "DELETE" }),
 
   triggerEvaluation: (runId: string) =>

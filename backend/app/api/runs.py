@@ -31,15 +31,24 @@ from app.db.database import (
 from app.db.storage import get_blueprint, get_task, list_blueprints, list_tasks
 from app.evaluator.advisor import evaluate_completed_run
 from app.runner.executor import (
+    RunConflictError,
     check_harness_cli_available,
+    clear_stale_runs,
     coalesce_events_for_display,
     event_bus,
     format_run_plain_text_log,
+    get_active_run,
+    is_run_actively_executing,
+    run_preflight_checks,
     start_execution_run,
     stop_active_run,
 )
 from app.schemas.blueprint import HarnessType
 from app.schemas.evaluation import (
+    ActiveRunStatusResponse,
+    ClearStaleRunsResponse,
+    PreflightCheckRequest,
+    PreflightCheckResponse,
     RunRecordSchema,
     StartRunRequest,
     TelemetryEvent,
@@ -90,6 +99,30 @@ def api_list_runs(
     return list_runs(architecture_id=architecture_id, task_id=task_id, harness=harness)
 
 
+@router.get("/active", response_model=ActiveRunStatusResponse)
+def api_get_active_run() -> ActiveRunStatusResponse:
+    """Return the currently executing run (if any) so UI clients can block concurrent launches."""
+    active = get_active_run()
+    return ActiveRunStatusResponse(has_active_run=active is not None, active_run=active)
+
+
+@router.post("/preflight", response_model=PreflightCheckResponse)
+def api_preflight_checks(req: PreflightCheckRequest) -> PreflightCheckResponse:
+    """Run preliminary validation checks before launching an execution/evaluation run."""
+    return run_preflight_checks(
+        architecture_id=req.architecture_id,
+        task_id=req.task_id,
+        harness=req.harness,
+        mode=req.mode,
+    )
+
+
+@router.delete("/stale", response_model=ClearStaleRunsResponse)
+def api_clear_stale_runs() -> ClearStaleRunsResponse:
+    """Clear stale, interrupted, or orphaned runs from Execution History and remove orphaned sandbox folders."""
+    return clear_stale_runs()
+
+
 @router.get("/{run_id}", response_model=RunRecordSchema)
 def api_get_run(run_id: str) -> RunRecordSchema:
     run = get_run(run_id)
@@ -112,6 +145,8 @@ async def api_start_run(req: StartRunRequest) -> RunRecordSchema:
             custom_prompt_override=req.custom_prompt_override,
             auto_evaluate_callback=_auto_eval if req.auto_evaluate else None,
         )
+    except RunConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -143,6 +178,15 @@ class EvaluateDirectoryRequest(BaseModel):
 @router.post("/evaluate-directory", response_model=RunRecordSchema)
 async def api_evaluate_deployed_directory(req: EvaluateDirectoryRequest) -> RunRecordSchema:
     """Ingest telemetry & deliverables from a deployed project directory and execute the 4-layer Evaluation & Advisor pipeline."""
+    active = get_active_run()
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Another execution/evaluation run ('{active.id}', status: {active.status}) is already in progress. "
+                f"Wait for it to finish or stop it first."
+            ),
+        )
     raw_dir = req.project_directory.strip() or "."
     candidate = Path(raw_dir)
     target_path = candidate.resolve() if candidate.is_absolute() else (ROOT_DIR / candidate).resolve()
@@ -372,17 +416,38 @@ async def api_stream_telemetry_sse(run_id: str) -> StreamingResponse:
 
 @router.delete("/{run_id}")
 def api_delete_run(run_id: str) -> Dict[str, Any]:
+    if is_run_actively_executing(run_id):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run '{run_id}' is currently executing. Stop it before deleting.",
+        )
     run = get_run(run_id)
-    if not delete_run(run_id):
-        raise HTTPException(status_code=404, detail=f"Run '{run_id}' not found")
+    existed = delete_run(run_id)
     if run and run.sandbox_path:
-        shutil.rmtree(Path(run.sandbox_path), ignore_errors=True)
-    return {"deleted": True, "id": run_id}
+        try:
+            sp = Path(run.sandbox_path)
+            if WORKSPACES_DIR.resolve() in sp.resolve().parents and sp.exists():
+                shutil.rmtree(sp, ignore_errors=True)
+        except Exception:
+            pass
+    else:
+        orphan_sandbox = WORKSPACES_DIR / run_id
+        if orphan_sandbox.exists() and orphan_sandbox.is_dir():
+            shutil.rmtree(orphan_sandbox, ignore_errors=True)
+    if not existed:
+        return {"deleted": False, "already_missing": True, "id": run_id}
+    return {"deleted": True, "already_missing": False, "id": run_id}
 
 
 @router.delete("")
 def api_delete_all_runs() -> Dict[str, Any]:
     """Delete all runs and telemetry events from Execution History and clean up sandbox worktrees."""
+    active = get_active_run()
+    if active is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot clear history while run '{active.id}' is actively executing. Stop it first.",
+        )
     count = delete_all_runs()
     if WORKSPACES_DIR.exists():
         for child in WORKSPACES_DIR.glob("run-*"):

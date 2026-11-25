@@ -8,26 +8,37 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from app.compilers import compile_architecture, get_adapter
-from app.config import settings
+from app.config import WORKSPACES_DIR, ensure_directories, settings
 from app.db.database import (
     append_telemetry_event,
+    delete_run,
     get_run,
+    list_runs,
+    list_runs_by_statuses,
     list_telemetry_events,
     save_run,
     update_run_status,
     utc_now_iso,
 )
 from app.db.storage import get_blueprint, get_task
-from app.runner.sandbox import create_isolated_sandbox, extract_sandbox_git_diff
+from app.runner.sandbox import create_isolated_sandbox, extract_sandbox_git_diff, resolve_workspace_source
 from app.runner.transcript_parsers import estimate_cost_usd, parse_stream_json_line
 from app.schemas.blueprint import AgentArchitecture, HarnessType
-from app.schemas.evaluation import RunMode, RunRecordSchema, TelemetryEvent
+from app.schemas.evaluation import (
+    ClearStaleRunsResponse,
+    PreflightCheckItem,
+    PreflightCheckResponse,
+    RunMode,
+    RunRecordSchema,
+    TelemetryEvent,
+)
 from app.schemas.task import TaskSpec
 
 
@@ -58,6 +69,366 @@ class TelemetryEventBus:
 event_bus = TelemetryEventBus()
 _active_tasks: Dict[str, asyncio.Task] = {}
 _active_processes: Dict[str, subprocess.Popen] = {}
+_starting_run_ids: Set[str] = set()
+_run_registry_lock = threading.RLock()
+ACTIVE_RUN_STATUSES = ("preparing_sandbox", "running", "evaluating")
+
+
+class RunConflictError(RuntimeError):
+    """Raised when a new run or evaluation is requested while another run is actively executing."""
+
+    def __init__(self, active_run_id: str, active_status: str = "running") -> None:
+        self.active_run_id = active_run_id
+        self.active_status = active_status
+        super().__init__(
+            f"Another execution/evaluation run ('{active_run_id}', status: {active_status}) is already in progress. "
+            f"Wait for it to finish or stop it before starting a new run."
+        )
+
+
+def _prune_finished_registry() -> None:
+    with _run_registry_lock:
+        done_tasks = [rid for rid, task in _active_tasks.items() if task.done()]
+        for rid in done_tasks:
+            _active_tasks.pop(rid, None)
+        done_procs = [rid for rid, proc in _active_processes.items() if proc.poll() is not None]
+        for rid in done_procs:
+            _active_processes.pop(rid, None)
+
+
+def is_run_actively_executing(run_id: str) -> bool:
+    """Return True if run_id is currently starting or has a live in-memory task/subprocess."""
+    _prune_finished_registry()
+    with _run_registry_lock:
+        if run_id in _starting_run_ids:
+            return True
+        t = _active_tasks.get(run_id)
+        if t is not None and not t.done():
+            return True
+        p = _active_processes.get(run_id)
+        if p is not None and p.poll() is None:
+            return True
+    return False
+
+
+def get_active_run() -> Optional[RunRecordSchema]:
+    """Return the currently executing RunRecordSchema, if any live run is in progress."""
+    _prune_finished_registry()
+    with _run_registry_lock:
+        live_ids = list(_starting_run_ids) + list(_active_tasks.keys()) + list(_active_processes.keys())
+    for rid in live_ids:
+        rec = get_run(rid)
+        if rec:
+            return rec
+        # Synthetic placeholder while sandbox is still being created before DB insert
+        return RunRecordSchema(
+            id=rid,
+            architecture_id="starting",
+            architecture_name="Starting Execution",
+            architecture_version="0.0.0",
+            task_id="starting",
+            task_name="Preparing Sandbox",
+            harness="claude_code",
+            mode="simulated_benchmark",
+            status="preparing_sandbox",
+            sandbox_path="",
+            cli_command="",
+            started_at=utc_now_iso(),
+        )
+    return None
+
+
+def find_stale_runs() -> List[RunRecordSchema]:
+    """Identify stale/orphaned runs that can be safely cleared from history."""
+    all_runs = list_runs(limit=500)
+    stale: List[RunRecordSchema] = []
+    for r in all_runs:
+        if is_run_actively_executing(r.id):
+            continue
+        # 1. Stuck in an active status with no live in-memory task/subprocess
+        if r.status in ACTIVE_RUN_STATUSES:
+            stale.append(r)
+            continue
+        # 2. Cancelled or failed runs without a completed evaluation report
+        if r.status in ("cancelled", "failed") and r.evaluation is None:
+            stale.append(r)
+            continue
+        # 3. Missing sandbox directory on disk (only for isolated sandbox runs under WORKSPACES_DIR)
+        if r.sandbox_path:
+            sp = Path(r.sandbox_path)
+            try:
+                is_managed_sandbox = WORKSPACES_DIR.resolve() in sp.resolve().parents
+            except Exception:
+                is_managed_sandbox = False
+            if is_managed_sandbox and not sp.exists() and r.evaluation is None:
+                stale.append(r)
+                continue
+    return stale
+
+
+def clear_stale_runs() -> ClearStaleRunsResponse:
+    """Delete stale/orphaned run records from SQLite and remove orphaned sandbox worktrees."""
+    stale_runs = find_stale_runs()
+    cleared_ids: List[str] = []
+    for r in stale_runs:
+        if is_run_actively_executing(r.id):
+            continue
+        if delete_run(r.id):
+            cleared_ids.append(r.id)
+        if r.sandbox_path:
+            sp = Path(r.sandbox_path)
+            try:
+                if WORKSPACES_DIR.resolve() in sp.resolve().parents and sp.exists():
+                    shutil.rmtree(sp, ignore_errors=True)
+            except Exception:
+                pass
+
+    # Also clean up orphaned run-* directories in WORKSPACES_DIR that have no DB record
+    removed_orphans = 0
+    if WORKSPACES_DIR.exists():
+        known_ids = {r.id for r in list_runs(limit=1000)}
+        with _run_registry_lock:
+            live_ids = set(_starting_run_ids) | set(_active_tasks.keys()) | set(_active_processes.keys())
+        for child in WORKSPACES_DIR.glob("run-*"):
+            if child.is_dir() and child.name not in known_ids and child.name not in live_ids:
+                shutil.rmtree(child, ignore_errors=True)
+                removed_orphans += 1
+
+    return ClearStaleRunsResponse(
+        cleared_count=len(cleared_ids),
+        cleared_run_ids=cleared_ids,
+        removed_orphan_sandboxes=removed_orphans,
+    )
+
+
+def run_preflight_checks(
+    architecture_id: str,
+    task_id: str,
+    harness: HarnessType,
+    mode: RunMode,
+) -> PreflightCheckResponse:
+    """Run preliminary checks before starting an execution/evaluation run."""
+    checks: List[PreflightCheckItem] = []
+
+    # 1. Single-flight concurrency check
+    active = get_active_run()
+    if active is not None:
+        checks.append(
+            PreflightCheckItem(
+                id="concurrency_lock",
+                name="Single-Flight Execution Lock",
+                status="fail",
+                message=f"Run '{active.id}' is already active ({active.status}).",
+                detail="Wait for the current run to finish or click 'Stop & Evaluate Now' before launching another.",
+            )
+        )
+    else:
+        checks.append(
+            PreflightCheckItem(
+                id="concurrency_lock",
+                name="Single-Flight Execution Lock",
+                status="pass",
+                message="No other evaluation run is currently executing.",
+            )
+        )
+
+    # 2. Architecture blueprint & compilation check
+    bp_tuple = get_blueprint(architecture_id)
+    if not bp_tuple:
+        checks.append(
+            PreflightCheckItem(
+                id="blueprint_valid",
+                name="Architecture Blueprint",
+                status="fail",
+                message=f"Architecture blueprint '{architecture_id}' not found.",
+            )
+        )
+    else:
+        bp = bp_tuple[0]
+        try:
+            comp = compile_architecture(bp, harness, run_id="preflight-check")
+            if not (bp.orchestrator.system_prompt or "").strip():
+                checks.append(
+                    PreflightCheckItem(
+                        id="blueprint_valid",
+                        name="Architecture Blueprint",
+                        status="warn",
+                        message=f"Blueprint '{bp.metadata.name}' compiled ({len(comp.files)} files), but orchestrator system prompt is empty.",
+                    )
+                )
+            else:
+                checks.append(
+                    PreflightCheckItem(
+                        id="blueprint_valid",
+                        name="Architecture Blueprint",
+                        status="pass",
+                        message=f"'{bp.metadata.name}' v{bp.metadata.version} compiles cleanly for {harness} ({len(comp.files)} files).",
+                    )
+                )
+        except Exception as exc:
+            checks.append(
+                PreflightCheckItem(
+                    id="blueprint_valid",
+                    name="Architecture Blueprint",
+                    status="fail",
+                    message=f"Blueprint compilation failed: {exc}",
+                )
+            )
+
+    # 3. Benchmark task & workspace source check
+    task_tuple = get_task(task_id)
+    if not task_tuple:
+        checks.append(
+            PreflightCheckItem(
+                id="task_workspace",
+                name="Benchmark Task & Workspace",
+                status="fail",
+                message=f"Benchmark task '{task_id}' not found.",
+            )
+        )
+    else:
+        task = task_tuple[0]
+        try:
+            resolved_ws = resolve_workspace_source(task.workspace_source)
+            checks.append(
+                PreflightCheckItem(
+                    id="task_workspace",
+                    name="Benchmark Task & Workspace",
+                    status="pass",
+                    message=f"Workspace source verified: {resolved_ws.name}",
+                    detail=str(resolved_ws),
+                )
+            )
+        except Exception as exc:
+            checks.append(
+                PreflightCheckItem(
+                    id="task_workspace",
+                    name="Benchmark Task & Workspace",
+                    status="fail",
+                    message=f"Workspace source unavailable: {exc}",
+                )
+            )
+
+        # 4. Deterministic verifiers check
+        if len(task.verifiers) == 0:
+            checks.append(
+                PreflightCheckItem(
+                    id="task_verifiers",
+                    name="Deterministic Verifiers",
+                    status="warn",
+                    message="Task has 0 deterministic verifiers configured; Layer 1 outcome score will be N/A.",
+                )
+            )
+        else:
+            req_count = sum(1 for v in task.verifiers if v.required)
+            checks.append(
+                PreflightCheckItem(
+                    id="task_verifiers",
+                    name="Deterministic Verifiers",
+                    status="pass",
+                    message=f"{len(task.verifiers)} verifier(s) ready ({req_count} required).",
+                )
+            )
+
+    # 5. Git & Sandbox directory check
+    git_bin = shutil.which("git")
+    try:
+        ensure_directories()
+        ws_writable = WORKSPACES_DIR.exists() and os.access(str(WORKSPACES_DIR), os.W_OK)
+    except Exception:
+        ws_writable = False
+    if not git_bin:
+        checks.append(
+            PreflightCheckItem(
+                id="sandbox_env",
+                name="Git & Sandbox Storage",
+                status="fail",
+                message="Git binary not found on PATH; cannot create isolated sandbox.",
+            )
+        )
+    elif not ws_writable:
+        checks.append(
+            PreflightCheckItem(
+                id="sandbox_env",
+                name="Git & Sandbox Storage",
+                status="fail",
+                message=f"Sandbox directory '{WORKSPACES_DIR}' is not writable.",
+            )
+        )
+    else:
+        checks.append(
+            PreflightCheckItem(
+                id="sandbox_env",
+                name="Git & Sandbox Storage",
+                status="pass",
+                message="Git binary detected and sandbox directory is writable.",
+            )
+        )
+
+    # 6. Harness CLI availability check
+    cli_avail, cli_bin = check_harness_cli_available(harness)
+    if mode == "simulated_benchmark":
+        checks.append(
+            PreflightCheckItem(
+                id="harness_cli",
+                name="Target Harness Runtime",
+                status="pass",
+                message=f"Simulated Sandbox Benchmark ready (CLI '{cli_bin}' {'detected' if cli_avail else 'not required'}).",
+            )
+        )
+    elif cli_avail:
+        checks.append(
+            PreflightCheckItem(
+                id="harness_cli",
+                name="Target Harness Runtime",
+                status="pass",
+                message=f"Harness CLI detected: {cli_bin}",
+            )
+        )
+    else:
+        checks.append(
+            PreflightCheckItem(
+                id="harness_cli",
+                name="Target Harness Runtime",
+                status="warn",
+                message=f"CLI binary '{cli_bin}' not found on PATH.",
+                detail=(
+                    "Headless mode will automatically fall back to the built-in Sandbox Simulator."
+                    if mode == "headless"
+                    else "Install the CLI before launching the interactive session command in your terminal."
+                ),
+            )
+        )
+
+    # 7. Stale runs check
+    stale_runs = find_stale_runs()
+    if stale_runs:
+        checks.append(
+            PreflightCheckItem(
+                id="stale_runs",
+                name="Execution History Hygiene",
+                status="warn",
+                message=f"{len(stale_runs)} stale/orphaned evaluation(s) found in history.",
+                detail="Use 'Clear Stale' in Execution History to remove interrupted or orphaned entries.",
+            )
+        )
+    else:
+        checks.append(
+            PreflightCheckItem(
+                id="stale_runs",
+                name="Execution History Hygiene",
+                status="pass",
+                message="No stale or orphaned evaluations in history.",
+            )
+        )
+
+    ready = all(c.status != "fail" for c in checks)
+    return PreflightCheckResponse(
+        ready=ready,
+        checks=checks,
+        active_run_id=active.id if active else None,
+        stale_run_count=len(stale_runs),
+    )
 
 
 def check_harness_cli_available(harness: HarnessType) -> Tuple[bool, str]:
@@ -1006,6 +1377,10 @@ async def _execute_headless_or_simulated_run(
                 message=f"Run failed: {err_detail}",
             )
         )
+    finally:
+        with _run_registry_lock:
+            _active_tasks.pop(run_id, None)
+            _starting_run_ids.discard(run_id)
 
 
 async def start_execution_run(
@@ -1017,83 +1392,100 @@ async def start_execution_run(
     auto_evaluate_callback: Optional[Callable[[str], asyncio.Future]] = None,
 ) -> RunRecordSchema:
     """Prepare isolated Git sandbox, deploy compiled architecture files, and start headless/interactive/simulated run."""
-    bp_tuple = get_blueprint(architecture_id)
-    if not bp_tuple:
-        raise ValueError(f"Architecture blueprint '{architecture_id}' not found")
-    blueprint, _, _ = bp_tuple
-
-    task_tuple = get_task(task_id)
-    if not task_tuple:
-        raise ValueError(f"Task '{task_id}' not found")
-    task, _, _ = task_tuple
-
     run_id = f"run-{uuid.uuid4().hex[:10]}"
-    server_url = f"http://{settings.host}:{settings.port}"
-    compilation = compile_architecture(blueprint, harness, run_id=run_id, server_url=server_url)
 
-    sandbox_dir = create_isolated_sandbox(
-        run_id=run_id,
-        workspace_source=task.workspace_source,
-        compilation=compilation,
-        base_commit=task.base_commit,
-    )
+    with _run_registry_lock:
+        active = get_active_run()
+        if active is not None:
+            raise RunConflictError(active.id, active.status)
+        _starting_run_ids.add(run_id)
 
-    prompt = custom_prompt_override or task.prompt
-    cli_cmd = (
-        compilation.interactive_launch_command
-        if mode == "interactive"
-        else compilation.cli_preview_command.replace("<TASK_PROMPT>", prompt.replace("\n", " ")[:120])
-    )
+    try:
+        bp_tuple = get_blueprint(architecture_id)
+        if not bp_tuple:
+            raise ValueError(f"Architecture blueprint '{architecture_id}' not found")
+        blueprint, _, _ = bp_tuple
 
-    initial_status = "waiting_for_user" if mode == "interactive" else "running"
-    run_record = RunRecordSchema(
-        id=run_id,
-        architecture_id=blueprint.metadata.id,
-        architecture_name=blueprint.metadata.name,
-        architecture_version=blueprint.metadata.version,
-        task_id=task.id,
-        task_name=task.name,
-        harness=harness,
-        mode=mode,
-        status=initial_status,  # type: ignore[arg-type]
-        sandbox_path=str(sandbox_dir),
-        cli_command=cli_cmd,
-        started_at=utc_now_iso(),
-    )
-    save_run(run_record, blueprint_snapshot=blueprint.model_dump(mode="json"))
+        task_tuple = get_task(task_id)
+        if not task_tuple:
+            raise ValueError(f"Task '{task_id}' not found")
+        task, _, _ = task_tuple
 
-    if mode == "interactive":
-        event_bus.publish(
-            TelemetryEvent(
-                run_id=run_id,
-                timestamp=utc_now_iso(),
-                source="runner",
-                event_type="SessionStart",
-                agent_id=blueprint.orchestrator.id,
-                status="info",
-                message=(
-                    f"Interactive sandbox ready at `{sandbox_dir}`. "
-                    f"Run `cd \"{sandbox_dir}\" && {compilation.interactive_launch_command}` to work interactively. "
-                    f"Live hooks will stream here automatically. Click 'Complete & Evaluate' when done."
-                ),
-            )
+        # Validate workspace source & git before creating sandbox
+        resolve_workspace_source(task.workspace_source)
+        if not shutil.which("git"):
+            raise RuntimeError("Git binary not found on PATH; cannot create isolated sandbox")
+
+        server_url = f"http://{settings.host}:{settings.port}"
+        compilation = compile_architecture(blueprint, harness, run_id=run_id, server_url=server_url)
+
+        sandbox_dir = create_isolated_sandbox(
+            run_id=run_id,
+            workspace_source=task.workspace_source,
+            compilation=compilation,
+            base_commit=task.base_commit,
         )
-    else:
-        bg_task = asyncio.create_task(
-            _execute_headless_or_simulated_run(
-                run_id=run_id,
-                blueprint=blueprint,
-                task=task,
-                harness=harness,
-                mode=mode,
-                sandbox_dir=sandbox_dir,
-                prompt=prompt,
-                auto_evaluate_callback=auto_evaluate_callback,
-            )
-        )
-        _active_tasks[run_id] = bg_task
 
-    return run_record
+        prompt = custom_prompt_override or task.prompt
+        cli_cmd = (
+            compilation.interactive_launch_command
+            if mode == "interactive"
+            else compilation.cli_preview_command.replace("<TASK_PROMPT>", prompt.replace("\n", " ")[:120])
+        )
+
+        initial_status = "waiting_for_user" if mode == "interactive" else "running"
+        run_record = RunRecordSchema(
+            id=run_id,
+            architecture_id=blueprint.metadata.id,
+            architecture_name=blueprint.metadata.name,
+            architecture_version=blueprint.metadata.version,
+            task_id=task.id,
+            task_name=task.name,
+            harness=harness,
+            mode=mode,
+            status=initial_status,  # type: ignore[arg-type]
+            sandbox_path=str(sandbox_dir),
+            cli_command=cli_cmd,
+            started_at=utc_now_iso(),
+        )
+        save_run(run_record, blueprint_snapshot=blueprint.model_dump(mode="json"))
+
+        if mode == "interactive":
+            event_bus.publish(
+                TelemetryEvent(
+                    run_id=run_id,
+                    timestamp=utc_now_iso(),
+                    source="runner",
+                    event_type="SessionStart",
+                    agent_id=blueprint.orchestrator.id,
+                    status="info",
+                    message=(
+                        f"Interactive sandbox ready at `{sandbox_dir}`. "
+                        f"Run `cd \"{sandbox_dir}\" && {compilation.interactive_launch_command}` to work interactively. "
+                        f"Live hooks will stream here automatically. Click 'Complete & Evaluate' when done."
+                    ),
+                )
+            )
+        else:
+            bg_task = asyncio.create_task(
+                _execute_headless_or_simulated_run(
+                    run_id=run_id,
+                    blueprint=blueprint,
+                    task=task,
+                    harness=harness,
+                    mode=mode,
+                    sandbox_dir=sandbox_dir,
+                    prompt=prompt,
+                    auto_evaluate_callback=auto_evaluate_callback,
+                )
+            )
+            with _run_registry_lock:
+                _active_tasks[run_id] = bg_task
+
+        return run_record
+    finally:
+        with _run_registry_lock:
+            _starting_run_ids.discard(run_id)
 
 
 def stop_active_run(run_id: str) -> bool:
