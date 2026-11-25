@@ -760,6 +760,66 @@ def test_issue_6_workflow_handoff_edges_normalization_and_compilation():
         assert [e.order for e in sdlc_wf] == list(range(1, len(sdlc_wf) + 1))
 
 
+def test_generated_agent_files_match_canvas_details_and_omit_tba_for_non_tba():
+    """Verify Generated Agent & Configuration Files include complete canvas agent details across all 3 harnesses
+    and do NOT emit TBA-only commands for non-TBA blueprints."""
+    sdlc_tuple = get_blueprint("planner-coder-verifier-custom")
+    assert sdlc_tuple is not None
+    sdlc_bp = sdlc_tuple[0].model_copy(deep=True)
+    sdlc_bp.orchestrator.id = "sdlc_lead"
+    sdlc_bp.orchestrator.permissions.allowed_commands = ["git status"]
+
+    for harness, root_doc, verifier_path in (
+        ("antigravity", "GEMINI.md", ".agents/agents/verifier.md"),
+        ("claude_code", "CLAUDE.md", ".claude/agents/verifier.md"),
+        ("opencode", "AGENTS.md", ".opencode/agent/verifier.md"),
+    ):
+        comp = compile_architecture(sdlc_bp, harness=harness, run_id="canvas-align-test")
+        files_map = {f.relative_path: f.content for f in comp.files}
+
+        # 1. Non-TBA blueprint must NOT emit generate-tba-pack or mention nonexistent TBA subagents
+        assert not any("generate-tba-pack" in p for p in files_map)
+        for path, content in files_map.items():
+            if "verify-setup" in path or "evaluate-project" in path:
+                assert "requirements_elicitor" not in content
+                assert "WORKFLOWS_AND_DELIVERY_DOCS.md" not in content
+                assert "sdlc_lead" in content
+
+        # 2. Root doc includes orchestrator ID, role, tools, allowed_commands, and subagent max_turns & tools
+        root_md = files_map[root_doc]
+        assert "`sdlc_lead`" in root_md
+        assert "`git status`" in root_md
+        assert "Max Turns" in root_md
+
+        # 3. Verifier subagent file includes max_turns, tools, allowed_commands (`pytest`), and assigned skills
+        ver_md = files_map[verifier_path]
+        assert "max_turns: 12" in ver_md
+        assert "`pytest`" in ver_md
+        assert "`/diff-audit`" in ver_md
+
+        if harness == "claude_code":
+            settings_json = json.loads(files_map[".claude/settings.local.json"])
+            assert "Bash(pytest*)" in settings_json["permissions"]["allow"]
+            assert "Bash(git status*)" in settings_json["permissions"]["allow"]
+            assert "Bash(rm -rf /*)" in settings_json["permissions"]["deny"]
+        elif harness == "opencode":
+            oc_json = json.loads(files_map["opencode.json"])
+            assert oc_json["agent"]["verifier"]["max_turns"] == 12
+            assert oc_json["agent"]["verifier"]["tools"]["read"] is True
+            assert "const orchId = cfg.orchestrator?.id" in files_map[".opencode/plugin/harness_eval_telemetry.ts"]
+        elif harness == "antigravity":
+            assert "allow_shell: true" in ver_md
+            assert "`/diff-audit`" in root_md  # Included inside GEMINI.md define_subagent SystemPrompt too
+
+    # 4. TBA blueprint DOES still emit generate-tba-pack for Antigravity and OpenCode
+    tba_tuple = get_blueprint("technical-business-analyst")
+    assert tba_tuple is not None
+    tba_agy = compile_architecture(tba_tuple[0], harness="antigravity", run_id="tba-check")
+    assert any("generate-tba-pack" in f.relative_path for f in tba_agy.files)
+    tba_oc = compile_architecture(tba_tuple[0], harness="opencode", run_id="tba-check")
+    assert any("generate-tba-pack" in f.relative_path for f in tba_oc.files)
+
+
 
 
 

@@ -394,6 +394,67 @@ def load_skill_bundle_files(sk: SkillSpec, target_skill_root: str) -> tuple[List
     return compiled, sk.instructions
 
 
+def is_tba_architecture(bp: AgentArchitecture) -> bool:
+    """Return True only when the blueprint represents a Technical Business Analyst (TBA) architecture."""
+    bp_id = (bp.metadata.id or "").lower()
+    if "technical-business-analyst" in bp_id or bp_id.startswith("tba-") or "-tba" in bp_id:
+        return True
+    tba_agent_ids = {"requirements_elicitor", "workflow_architect", "user_story_author", "ba_qa_gatekeeper"}
+    subagent_ids = {sa.id for sa in bp.subagents}
+    return len(tba_agent_ids & subagent_ids) >= 2
+
+
+def render_agent_runtime_constraints_markdown(
+    agent_spec: Union[OrchestratorSpec, SubagentSpec],
+    assigned_skills: List[SkillSpec],
+    resolved_model: str,
+) -> str:
+    """Render complete canvas-configured runtime constraints (tools, permissions, commands, skills, MCP) for an agent."""
+    lines: List[str] = ["", "## Agent Runtime Specification"]
+    lines.append(f"- **Agent ID**: `{agent_spec.id}` | **Role**: {agent_spec.role}")
+    lines.append(f"- **Model**: `{resolved_model}` (Tier: `{agent_spec.model}`)")
+    if isinstance(agent_spec, SubagentSpec):
+        lines.append(f"- **Max Turns**: `{agent_spec.max_turns}`")
+    else:
+        lines.append(
+            f"- **Budgets**: Max Turns `{agent_spec.budgets.max_turns}` | "
+            f"Max Cost `${agent_spec.budgets.max_cost_usd:.2f}` | Timeout `{agent_spec.budgets.timeout_seconds}s`"
+        )
+    tools_str = ", ".join(f"`{t}`" for t in agent_spec.tools) if agent_spec.tools else "None"
+    lines.append(f"- **Tools**: {tools_str}")
+    perms = agent_spec.permissions
+    lines.append(
+        f"- **Permissions**: `allow_write={perms.allow_write}`, `allow_shell={perms.allow_shell}`, `allow_network={perms.allow_network}`"
+    )
+    if perms.allowed_commands:
+        lines.append(
+            "- **Allowed Shell Commands**: " + ", ".join(f"`{c}`" for c in perms.allowed_commands)
+        )
+    if perms.blocked_commands:
+        lines.append(
+            "- **Blocked Shell Commands**: " + ", ".join(f"`{c}`" for c in perms.blocked_commands)
+        )
+
+    if assigned_skills:
+        lines.append("")
+        lines.append("## Assigned Skills")
+        lines.append("Apply the following skills when executing your tasks:")
+        for sk in assigned_skills:
+            slug = resolve_effective_skill_slug(sk)
+            lines.append(f"- **`/{slug}`** (`{sk.name}`): {sk.description}")
+
+    if agent_spec.mcp_servers:
+        lines.append("")
+        lines.append("## Assigned MCP Servers")
+        lines.append(
+            "You are authorized to use MCP tools from: "
+            + ", ".join(f"`{m}`" for m in agent_spec.mcp_servers)
+            + "."
+        )
+
+    return "\n".join(lines) + "\n"
+
+
 class HarnessAdapter(ABC):
     """Abstract base compiler for translating an AgentArchitecture into native harness files."""
 
@@ -412,12 +473,25 @@ class HarnessAdapter(ABC):
 
     def render_routing_contract_markdown(self, bp: AgentArchitecture) -> str:
         """Compile the visual graph topology, subagent roster, permissions, and hooks into an explicit routing contract."""
+        bp.normalize_topology_edges()
         orch_resolved_model = self.resolve_agent_model(bp.orchestrator)
+        orch_tools_str = ", ".join(f"`{t}`" for t in bp.orchestrator.tools) if bp.orchestrator.tools else "None"
+        orch_mcp_str = (
+            ", ".join(f"`{m}`" for m in bp.orchestrator.mcp_servers) if bp.orchestrator.mcp_servers else "None"
+        )
+        orch_skills = bp.skills_for_agent(bp.orchestrator.id)
+        orch_skills_str = (
+            ", ".join(f"`/{resolve_effective_skill_slug(sk)}`" for sk in orch_skills) if orch_skills else "None"
+        )
+        orch_perms = bp.orchestrator.permissions
+
         lines: List[str] = [
             f"# Architecture Blueprint: {bp.metadata.name} (`{bp.metadata.id}` v{bp.metadata.version})",
             "",
             "## 1. Root Orchestrator Role & System Instructions",
+            f"- **Orchestrator**: {bp.orchestrator.name} (`{bp.orchestrator.id}`) — {bp.orchestrator.role}",
             f"- **Target Harness**: `{self.harness_type}` | **Orchestrator Model**: `{orch_resolved_model}` (Tier: `{bp.orchestrator.model}`)",
+            f"- **Tools**: {orch_tools_str} | **Assigned Skills**: {orch_skills_str} | **MCP Servers**: {orch_mcp_str}",
             "",
             bp.orchestrator.system_prompt.strip(),
             "",
@@ -425,20 +499,37 @@ class HarnessAdapter(ABC):
             f"- **Max Turns**: `{bp.orchestrator.budgets.max_turns}`",
             f"- **Max Budget (USD)**: `${bp.orchestrator.budgets.max_cost_usd:.2f}`",
             f"- **Timeout**: `{bp.orchestrator.budgets.timeout_seconds}s`",
-            f"- **Orchestrator Direct File Write Allowed**: `{bp.orchestrator.permissions.allow_write}`",
-            f"- **Orchestrator Direct Shell Execution Allowed**: `{bp.orchestrator.permissions.allow_shell}`",
-            "",
+            f"- **Orchestrator Direct File Write Allowed**: `{orch_perms.allow_write}`",
+            f"- **Orchestrator Direct Shell Execution Allowed**: `{orch_perms.allow_shell}`",
+            f"- **Orchestrator Network Access Allowed**: `{orch_perms.allow_network}`",
         ]
+        if orch_perms.allowed_commands:
+            lines.append(
+                "- **Orchestrator Allowed Commands**: " + ", ".join(f"`{c}`" for c in orch_perms.allowed_commands)
+            )
+        if orch_perms.blocked_commands:
+            lines.append(
+                "- **Orchestrator Blocked Commands**: " + ", ".join(f"`{c}`" for c in orch_perms.blocked_commands)
+            )
+        lines.append("")
 
         if bp.subagents:
             lines.append("## 3. Deployed Subagent Roster")
-            lines.append("| Subagent ID | Name | Role | Resolved Model | MCP Servers | Write Allowed | Shell Allowed |")
-            lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+            lines.append(
+                "| Subagent ID | Name | Role | Resolved Model | Tools | Assigned Skills | MCP Servers | Max Turns | Write | Shell |"
+            )
+            lines.append("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
             for sa in bp.subagents:
+                sa_tools_str = ", ".join(f"`{t}`" for t in sa.tools) if sa.tools else "None"
+                sa_skills = bp.skills_for_agent(sa.id)
+                sa_skills_str = (
+                    ", ".join(f"`/{resolve_effective_skill_slug(sk)}`" for sk in sa_skills) if sa_skills else "None"
+                )
                 mcp_str = ", ".join(f"`{m}`" for m in sa.mcp_servers) if sa.mcp_servers else "None"
                 lines.append(
                     f"| `{sa.id}` | {sa.name} | {sa.role} | `{self.resolve_agent_model(sa)}` "
-                    f"| {mcp_str} | `{sa.permissions.allow_write}` | `{sa.permissions.allow_shell}` |"
+                    f"| {sa_tools_str} | {sa_skills_str} | {mcp_str} | `{sa.max_turns}` "
+                    f"| `{sa.permissions.allow_write}` | `{sa.permissions.allow_shell}` |"
                 )
             lines.append("")
 

@@ -42,6 +42,23 @@ class AntigravityAdapter(HarnessAdapter):
     ) -> CompilationResult:
         files: List[CompiledFile] = []
 
+        from app.compilers.base import (
+            is_tba_architecture,
+            load_skill_bundle_files,
+            render_agent_runtime_constraints_markdown,
+            resolve_effective_skill_slug,
+        )
+
+        blueprint.normalize_topology_edges()
+        any_shell_allowed = blueprint.orchestrator.permissions.allow_shell or any(
+            sa.permissions.allow_shell for sa in blueprint.subagents
+        )
+        shell_guidance = (
+            "3. Respect each agent's configured `allow_write`, `allow_shell`, `allowed_commands`, and `blocked_commands` constraints below."
+            if any_shell_allowed
+            else "3. Work strictly offline using local files only (do NOT launch a browser or run shell commands unless explicitly authorized)."
+        )
+
         # Build explicit Antigravity Subagent Registration & Invocation Contract
         subagent_specs_lines: List[str] = [
             "",
@@ -49,24 +66,33 @@ class AntigravityAdapter(HarnessAdapter):
             "When executing this architecture in Antigravity (`agy` CLI or Antigravity IDE):",
             "1. Register any custom subagent below at the start of the task using `define_subagent` (if not already registered in this conversation).",
             "2. Delegate each stage in strict topology order using `invoke_subagent(TypeName=<Subagent ID>, Role=<Role>, Prompt=<Task>, Model=<Model Enum>)`.",
-            "3. Work strictly offline using local files only (do NOT launch a browser or run python/pytest commands unless explicitly required).",
+            shell_guidance,
             "",
         ]
         for sa in blueprint.subagents:
             resolved_m = self.resolve_agent_model(sa)
             agy_enum = self._to_agy_subagent_model_enum(resolved_m, sa.model)
+            sa_skills = blueprint.skills_for_agent(sa.id)
+            sa_constraints_md = render_agent_runtime_constraints_markdown(sa, sa_skills, resolved_m)
+            enable_write_or_shell = sa.permissions.allow_write or sa.permissions.allow_shell
             subagent_specs_lines.extend(
                 [
                     f"### Subagent `{sa.id}` — {sa.name}",
-                    f"- **`define_subagent` Parameters**:",
+                    "- **`define_subagent` Parameters**:",
                     f"  - `Name`: `\"{sa.id}\"`",
                     f"  - `Description`: {json.dumps(sa.role)}",
-                    f"  - `EnableWriteTools`: `{str(sa.permissions.allow_write).lower()}`",
-                    f"  - `EnableMCPTools`: `{str(len(sa.mcp_servers) > 0).lower()}`" + (f" (Assigned MCP Servers: {', '.join(f'`{m}`' for m in sa.mcp_servers)})" if sa.mcp_servers else ""),
-                    f"- **`invoke_subagent` Model**: `\"{agy_enum}\"` (Configured Model: `{resolved_m}`)",
-                    f"- **`SystemPrompt`**:",
+                    f"  - `EnableWriteTools`: `{str(enable_write_or_shell).lower()}` (Write: `{sa.permissions.allow_write}`, Shell: `{sa.permissions.allow_shell}`)",
+                    f"  - `EnableMCPTools`: `{str(len(sa.mcp_servers) > 0).lower()}`"
+                    + (
+                        f" (Assigned MCP Servers: {', '.join(f'`{m}`' for m in sa.mcp_servers)})"
+                        if sa.mcp_servers
+                        else ""
+                    ),
+                    f"- **`invoke_subagent` Model**: `\"{agy_enum}\"` (Configured Model: `{resolved_m}`, Max Turns: `{sa.max_turns}`)",
+                    "- **`SystemPrompt`**:",
                     "```markdown",
                     sa.system_prompt.strip(),
+                    sa_constraints_md.strip(),
                     "```",
                     "",
                 ]
@@ -100,40 +126,28 @@ class AntigravityAdapter(HarnessAdapter):
         )
 
         # 2. Subagents -> .agents/agents/<id>.md and .agent/agents/<id>.md
-        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
-
         for sa in blueprint.subagents:
             model_tier = self.resolve_agent_model(sa)
             sa_desc = json.dumps(f"{sa.name} — {sa.role}")
             enable_mcp = len(sa.mcp_servers) > 0
-            mcp_note = (
-                f"\n## Assigned MCP Servers\nYou are authorized to use MCP tools from: {', '.join(f'`{m}`' for m in sa.mcp_servers)}.\n"
-                if sa.mcp_servers
-                else ""
-            )
             sa_skills = blueprint.skills_for_agent(sa.id)
-            skills_note = (
-                "\n## Assigned Skills\nApply the following skills when executing your tasks:\n"
-                + "\n".join(
-                    f"- **`/{resolve_effective_skill_slug(sk)}`** (`{sk.name}`): {sk.description}"
-                    for sk in sa_skills
-                )
-                + "\n"
-                if sa_skills
-                else ""
-            )
+            sa_constraints_md = render_agent_runtime_constraints_markdown(sa, sa_skills, model_tier)
+            tools_str = ", ".join(sa.tools)
             subagent_md = (
                 "---\n"
                 f"name: {sa.id}\n"
                 f"description: {sa_desc}\n"
                 f"model: {model_tier}\n"
+                f"tools: {tools_str}\n"
+                f"max_turns: {sa.max_turns}\n"
                 f"enable_write_tools: {str(sa.permissions.allow_write).lower()}\n"
+                f"allow_shell: {str(sa.permissions.allow_shell).lower()}\n"
+                f"allow_network: {str(sa.permissions.allow_network).lower()}\n"
                 f"enable_mcp_tools: {str(enable_mcp).lower()}\n"
                 "---\n\n"
                 f"# {sa.name} (`{sa.id}`)\n\n"
                 f"{sa.system_prompt.strip()}\n"
-                f"{skills_note}"
-                f"{mcp_note}"
+                f"{sa_constraints_md}"
             )
             files.append(
                 CompiledFile(
@@ -188,51 +202,63 @@ class AntigravityAdapter(HarnessAdapter):
                 )
             )
 
+        subagent_list_str = (
+            ", ".join(f"`{sa.id}`" for sa in blueprint.subagents) if blueprint.subagents else "*none (solo orchestrator)*"
+        )
+        skill_list_str = (
+            ", ".join(f"`/{resolve_effective_skill_slug(sk)}`" for sk in blueprint.skills)
+            if blueprint.skills
+            else "*none*"
+        )
+
         builtin_skills: List[Dict[str, str]] = [
             {
                 "id": "verify-setup",
-                "name": "Verify Antigravity Agent Architecture & External Documentation Access",
-                "description": "Use this skill when the user asks to verify setup, check installed subagents, or confirm external documentation readability.",
+                "name": f"Verify Antigravity Setup — {blueprint.metadata.name}",
+                "description": "Use this skill when the user asks to verify setup, check installed subagents, or confirm workspace configuration.",
                 "instructions": (
-                    "Perform a 3-step installation and documentation access health check using file read tools only:\n"
-                    "1. Confirm the active architecture in `GEMINI.md` and list all configured subagents.\n"
-                    "2. Read the **External Reference Documentation Directory** section in `GEMINI.md`, "
-                    "read the first file from each documentation subfolder (`initial_customer_requirements/`, `workshops/`, `bor_dor_and_dod/`), "
-                    "and confirm its contents are readable.\n"
-                    "3. Print a `SETUP VERIFIED: READY (Antigravity Mode)` checklist showing the active orchestrator, subagents, skills, and readable documentation files."
-                ),
-            },
-            {
-                "id": "generate-tba-pack",
-                "name": "Generate Full TBA Delivery Pack (Workflows + Epics & User Stories)",
-                "description": "Use this skill when the user asks to run the TBA pipeline, /generate-tba-pack, or produce WORKFLOWS_AND_DELIVERY_DOCS.md and EPICS_AND_USER_STORIES.md.",
-                "instructions": (
-                    "Execute the complete multi-agent Technical Business Analyst pipeline using `GEMINI.md` and the external documentation directory:\n"
-                    "1. Define and invoke `requirements_elicitor` to read all files in `initial_customer_requirements/`, `workshops/`, and `bor_dor_and_dod/` from the external documentation directory and catalog `BR-001`..`BR-020` and `NFR-001`..`NFR-006`.\n"
-                    "2. Define and invoke `workflow_architect` to author `WORKFLOWS_AND_DELIVERY_DOCS.md` in the workspace root containing:\n"
-                    "   - End-to-End Process Workflow (`flowchart TD` Mermaid diagram)\n"
-                    "   - Actor & System Sequence Diagram (`sequenceDiagram` Mermaid diagram)\n"
-                    "   - 5-State Task Lifecycle State Diagram (`stateDiagram-v2` Mermaid diagram)\n"
-                    "   - Data Dictionary & RBAC/API Error Contract.\n"
-                    "3. Define and invoke `user_story_author` to author `EPICS_AND_USER_STORIES.md` in the workspace root containing:\n"
-                    "   - Epics Catalog (`EPIC-01`..`EPIC-05`)\n"
-                    "   - User Stories (`US-101`..`US-106`) with Connextra statements (`As a <role>, I want <goal>, so that <benefit>`), Ron Jeffries' 3 Cs (**Card**, **Conversation** for the Development Team, **Confirmation** with BDD `Given / When / Then` scenarios & `TC-xxx` IDs for the Testing Team), and Bill Wake's **INVEST** checklist\n"
-                    "   - Definition of Ready (DoR) & Definition of Done (DoD)\n"
-                    "   - Requirements Traceability Matrix (RTM) mapping `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `TC-xxx`.\n"
-                    "4. Define and invoke `ba_qa_gatekeeper` to review both markdown files and confirm `VERDICT: PASS`."
+                    "Perform a 3-step installation health check using file read tools:\n"
+                    f"1. Confirm the active architecture `{blueprint.metadata.name}` (`{blueprint.metadata.id}`) in `GEMINI.md`.\n"
+                    f"2. Confirm the configured orchestrator (`{blueprint.orchestrator.id}`), subagents ({subagent_list_str}), and skills ({skill_list_str}).\n"
+                    "3. If an **External Reference Documentation Directory** section exists in `GEMINI.md`, verify its files are readable, then print a `SETUP VERIFIED: READY (Antigravity Mode)` checklist."
                 ),
             },
             {
                 "id": "evaluate-project",
-                "name": "Prepare Workspace Deliverables for HarnessForge Evaluation",
+                "name": f"Prepare Workspace Deliverables for Evaluation — {blueprint.metadata.name}",
                 "description": "Use this skill when the user asks to evaluate the project or run /evaluate-project.",
                 "instructions": (
-                    "1. Confirm that `WORKFLOWS_AND_DELIVERY_DOCS.md` and `EPICS_AND_USER_STORIES.md` exist in the current workspace.\n"
-                    "2. Summarize the Epics, User Stories, and Mermaid Workflow Diagrams produced.\n"
+                    f"1. Summarize all deliverables and code/document changes produced by `{blueprint.orchestrator.id}` and subagents ({subagent_list_str}) in this workspace.\n"
+                    "2. Confirm that all expected outputs and tests for the active benchmark task are present on disk.\n"
                     "3. Inform the user: **'Deliverables are ready on disk! Switch to HarnessForge Studio and click `2. Evaluate Project` to view your 4-Layer Evaluation Scorecard and AI Architecture Advisor recommendations.'**"
                 ),
             },
         ]
+
+        if is_tba_architecture(blueprint):
+            builtin_skills.insert(
+                1,
+                {
+                    "id": "generate-tba-pack",
+                    "name": "Generate Full TBA Delivery Pack (Workflows + Epics & User Stories)",
+                    "description": "Use this skill when the user asks to run the TBA pipeline, /generate-tba-pack, or produce WORKFLOWS_AND_DELIVERY_DOCS.md and EPICS_AND_USER_STORIES.md.",
+                    "instructions": (
+                        "Execute the complete multi-agent Technical Business Analyst pipeline using `GEMINI.md` and the external documentation directory:\n"
+                        "1. Define and invoke `requirements_elicitor` to read all files in `initial_customer_requirements/`, `workshops/`, and `bor_dor_and_dod/` from the external documentation directory and catalog `BR-001`..`BR-020` and `NFR-001`..`NFR-006`.\n"
+                        "2. Define and invoke `workflow_architect` to author `WORKFLOWS_AND_DELIVERY_DOCS.md` in the workspace root containing:\n"
+                        "   - End-to-End Process Workflow (`flowchart TD` Mermaid diagram)\n"
+                        "   - Actor & System Sequence Diagram (`sequenceDiagram` Mermaid diagram)\n"
+                        "   - 5-State Task Lifecycle State Diagram (`stateDiagram-v2` Mermaid diagram)\n"
+                        "   - Data Dictionary & RBAC/API Error Contract.\n"
+                        "3. Define and invoke `user_story_author` to author `EPICS_AND_USER_STORIES.md` in the workspace root containing:\n"
+                        "   - Epics Catalog (`EPIC-01`..`EPIC-05`)\n"
+                        "   - User Stories (`US-101`..`US-106`) with Connextra statements (`As a <role>, I want <goal>, so that <benefit>`), Ron Jeffries' 3 Cs (**Card**, **Conversation** for the Development Team, **Confirmation** with BDD `Given / When / Then` scenarios & `TC-xxx` IDs for the Testing Team), and Bill Wake's **INVEST** checklist\n"
+                        "   - Definition of Ready (DoR) & Definition of Done (DoD)\n"
+                        "   - Requirements Traceability Matrix (RTM) mapping `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `TC-xxx`.\n"
+                        "4. Define and invoke `ba_qa_gatekeeper` to review both markdown files and confirm `VERDICT: PASS`."
+                    ),
+                },
+            )
 
         for sk_dict in builtin_skills:
             skill_md = (

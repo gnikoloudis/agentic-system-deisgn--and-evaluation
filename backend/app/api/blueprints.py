@@ -229,6 +229,14 @@ def api_export_to_directory(architecture_id: str, req: ExportToDirectoryRequest)
     )
     save_run(deployed_run, blueprint_snapshot=bp.model_dump(mode="json"))
 
+    from app.compilers.base import is_tba_architecture, resolve_effective_skill_slug
+
+    installed_commands = ["/verify-setup", "/evaluate-project"]
+    if is_tba_architecture(bp):
+        installed_commands.insert(1, "/generate-tba-pack")
+    installed_commands.extend(f"/{cmd.id.lstrip('/')}" for cmd in bp.commands)
+    installed_commands.extend(f"/{resolve_effective_skill_slug(sk)}" for sk in bp.skills)
+
     return {
         "exported": True,
         "run_id": run_id,
@@ -238,13 +246,7 @@ def api_export_to_directory(architecture_id: str, req: ExportToDirectoryRequest)
         "docs_directory": str(docs_path) if docs_path and docs_path.exists() else None,
         "discovered_docs": discovered_docs,
         "installed_agents": [bp.orchestrator.id, *[sa.id for sa in bp.subagents]],
-        "installed_commands": [
-            "/verify-setup",
-            "/generate-tba-pack",
-            "/evaluate-project",
-            *[f"/{cmd.id.lstrip('/')}" for cmd in bp.commands],
-            *[f"/{sk.id}" for sk in bp.skills],
-        ],
+        "installed_commands": installed_commands,
         "files_written": [f.relative_path for f in compilation.files],
         "launch_command": compilation.interactive_launch_command,
     }

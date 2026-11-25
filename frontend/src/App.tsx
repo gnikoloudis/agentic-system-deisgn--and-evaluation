@@ -84,7 +84,7 @@ export default function App() {
   const [renamingBlueprintId, setRenamingBlueprintId] = useState<string | null>(null);
   const [renamingBlueprintTitle, setRenamingBlueprintTitle] = useState<string>("");
   const [compiledResult, setCompiledResult] = useState<CompilationResult | null>(null);
-  const [selectedCompiledFileIdx, setSelectedCompiledFileIdx] = useState<number>(0);
+  const [selectedCompiledFilePath, setSelectedCompiledFilePath] = useState<string>("");
   const [exportDir, setExportDir] = useState<string>("");
   const [externalDocsDir, setExternalDocsDir] = useState<string>("");
   const [deploymentReceipt, setDeploymentReceipt] = useState<{
@@ -282,7 +282,7 @@ export default function App() {
     }
   }, [activeTab, selectedBlueprint?.metadata.id, selectedTask?.id, runHarness, runMode, runs.length, isRunBlocking, refreshPreflight]);
 
-  // Debounced live compiled preview whenever selected blueprint or target harness changes
+  // Debounced live compiled preview whenever selected blueprint, target harness, or harness model tiers change
   useEffect(() => {
     if (!selectedBlueprint) return;
     if (compilePreviewTimerRef.current) {
@@ -293,7 +293,11 @@ export default function App() {
         .compilePreviewInline(selectedBlueprint, previewHarness)
         .then((res) => {
           setCompiledResult(res);
-          setSelectedCompiledFileIdx((prev) => (prev < res.files.length ? prev : 0));
+          setSelectedCompiledFilePath((prev) =>
+            prev && res.files.some((f) => f.relative_path === prev)
+              ? prev
+              : res.files[0]?.relative_path || ""
+          );
         })
         .catch(() => { });
     }, 300);
@@ -302,7 +306,7 @@ export default function App() {
         clearTimeout(compilePreviewTimerRef.current);
       }
     };
-  }, [selectedBlueprint, previewHarness]);
+  }, [selectedBlueprint, previewHarness, harnessModels]);
 
   // Load telemetry events when activeRun changes; auto-prune ghost/stale runs that return 404
   useEffect(() => {
@@ -3073,9 +3077,9 @@ export default function App() {
                             });
                             setHarnessModels(saved);
                             if (selectedBlueprint) {
-                              const comp = await api.compilePreview(
-                                selectedBlueprint.metadata.id,
-                                runHarness
+                              const comp = await api.compilePreviewInline(
+                                selectedBlueprint,
+                                previewHarness
                               );
                               setCompiledResult(comp);
                             }
@@ -3196,7 +3200,7 @@ export default function App() {
                                   });
                                   setHarnessModels(saved);
                                   if (selectedBlueprint) {
-                                    const comp = await api.compilePreview(selectedBlueprint.metadata.id, "opencode");
+                                    const comp = await api.compilePreviewInline(selectedBlueprint, previewHarness);
                                     setCompiledResult(comp);
                                   }
                                   notify(`Removed enterprise provider '${prov.id}'`);
@@ -3323,7 +3327,7 @@ export default function App() {
                           setEntProvModelsText("");
                           setEntProvHeaders("");
                           if (selectedBlueprint) {
-                            const comp = await api.compilePreview(selectedBlueprint.metadata.id, "opencode");
+                            const comp = await api.compilePreviewInline(selectedBlueprint, previewHarness);
                             setCompiledResult(comp);
                           }
                           notify(
@@ -3406,36 +3410,45 @@ export default function App() {
                       </div>
 
                       {/* Generated File Tabs */}
-                      <div className="space-y-1 shrink-0">
-                        <div className="text-[10px] uppercase font-bold text-slate-400">
-                          Generated Agent & Configuration Files ({compiledResult.files.length})
-                        </div>
-                        <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto p-1 rounded-lg bg-slate-950/60 border border-slate-800/80">
-                          {compiledResult.files.map((f, idx) => (
-                            <button
-                              key={f.relative_path}
-                              onClick={() => setSelectedCompiledFileIdx(idx)}
-                              className={`px-2 py-1 rounded text-[11px] font-mono border cursor-pointer ${selectedCompiledFileIdx === idx
-                                ? "bg-cyan-950 border-cyan-500 text-cyan-200"
-                                : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
-                                }`}
-                            >
-                              {f.relative_path}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
+                      {(() => {
+                        const activeFile =
+                          compiledResult.files.find((f) => f.relative_path === selectedCompiledFilePath) ||
+                          compiledResult.files[0];
+                        return (
+                          <>
+                            <div className="space-y-1 shrink-0">
+                              <div className="text-[10px] uppercase font-bold text-slate-400">
+                                Generated Agent & Configuration Files ({compiledResult.files.length})
+                              </div>
+                              <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto p-1 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                                {compiledResult.files.map((f) => (
+                                  <button
+                                    key={f.relative_path}
+                                    onClick={() => setSelectedCompiledFilePath(f.relative_path)}
+                                    className={`px-2 py-1 rounded text-[11px] font-mono border cursor-pointer ${activeFile?.relative_path === f.relative_path
+                                      ? "bg-cyan-950 border-cyan-500 text-cyan-200"
+                                      : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
+                                      }`}
+                                  >
+                                    {f.relative_path}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
 
-                      {compiledResult.files[selectedCompiledFileIdx] && (
-                        <div className="flex flex-col shrink-0">
-                          <div className="text-[11px] text-slate-400 mb-1">
-                            {compiledResult.files[selectedCompiledFileIdx].description}
-                          </div>
-                          <pre className="h-72 max-h-96 overflow-auto resize-y bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[11px] text-slate-200 leading-relaxed whitespace-pre-wrap">
-                            {compiledResult.files[selectedCompiledFileIdx].content}
-                          </pre>
-                        </div>
-                      )}
+                            {activeFile && (
+                              <div className="flex flex-col shrink-0">
+                                <div className="text-[11px] text-slate-400 mb-1">
+                                  {activeFile.description}
+                                </div>
+                                <pre className="h-72 max-h-96 overflow-auto resize-y bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[11px] text-slate-200 leading-relaxed whitespace-pre-wrap">
+                                  {activeFile.content}
+                                </pre>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
 
                       {/* Direct Export & Deployed Project Evaluation */}
                       <div className="pt-3 border-t border-slate-800 space-y-2.5 shrink-0 pb-4">

@@ -66,8 +66,13 @@ class ClaudeCodeAdapter(HarnessAdapter):
         )
 
         # 2. Subagents -> .claude/agents/<id>.md
-        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
+        from app.compilers.base import (
+            load_skill_bundle_files,
+            render_agent_runtime_constraints_markdown,
+            resolve_effective_skill_slug,
+        )
 
+        blueprint.normalize_topology_edges()
         for sa in blueprint.subagents:
             sa_tools = self._map_tools(sa.tools, sa.permissions.allow_write, sa.permissions.allow_shell)
             for mcp_id in sa.mcp_servers:
@@ -76,33 +81,19 @@ class ClaudeCodeAdapter(HarnessAdapter):
                     sa_tools.append(mcp_tool_glob)
             tools_str = ", ".join(sa_tools)
             model_id = self.resolve_agent_model(sa)
-            mcp_note = (
-                f"\n## Assigned MCP Servers\nYou are authorized to use tools from: {', '.join(f'`{m}`' for m in sa.mcp_servers)}.\n"
-                if sa.mcp_servers
-                else ""
-            )
             sa_skills = blueprint.skills_for_agent(sa.id)
-            skills_note = (
-                "\n## Assigned Skills\nApply the following skills when executing your tasks:\n"
-                + "\n".join(
-                    f"- **`/{resolve_effective_skill_slug(sk)}`** (`{sk.name}`): {sk.description}"
-                    for sk in sa_skills
-                )
-                + "\n"
-                if sa_skills
-                else ""
-            )
+            sa_constraints_md = render_agent_runtime_constraints_markdown(sa, sa_skills, model_id)
             subagent_md = (
                 "---\n"
                 f"name: {sa.id}\n"
                 f"description: {sa.role}\n"
                 f"tools: {tools_str}\n"
                 f"model: {model_id}\n"
+                f"max_turns: {sa.max_turns}\n"
                 "---\n\n"
                 f"# {sa.name} (`{sa.id}`)\n\n"
                 f"{sa.system_prompt.strip()}\n"
-                f"{skills_note}"
-                f"{mcp_note}"
+                f"{sa_constraints_md}"
             )
             files.append(
                 CompiledFile(
@@ -145,22 +136,48 @@ class ClaudeCodeAdapter(HarnessAdapter):
                 )
             )
 
-        # 4. Hooks & Permissions -> .claude/settings.local.json
+        # 4. Hooks & Permissions -> .claude/settings.local.json (derived from blueprint canvas permissions)
+        allow_rules: List[str] = []
+        deny_rules: List[str] = []
+
+        def _add_unique(lst: List[str], item: str) -> None:
+            if item and item not in lst:
+                lst.append(item)
+
+        for t in self._map_tools(
+            blueprint.orchestrator.tools,
+            blueprint.orchestrator.permissions.allow_write,
+            blueprint.orchestrator.permissions.allow_shell,
+        ):
+            if t != "Bash":
+                _add_unique(allow_rules, t)
+        for sa in blueprint.subagents:
+            for t in self._map_tools(sa.tools, sa.permissions.allow_write, sa.permissions.allow_shell):
+                if t != "Bash":
+                    _add_unique(allow_rules, t)
+
+        all_agents = [blueprint.orchestrator, *blueprint.subagents]
+        any_shell = any(ag.permissions.allow_shell for ag in all_agents)
+        custom_allowed_cmds = [c for ag in all_agents for c in ag.permissions.allowed_commands if c.strip()]
+        if custom_allowed_cmds:
+            for cmd in custom_allowed_cmds:
+                _add_unique(allow_rules, f"Bash({cmd}*)")
+        elif any_shell:
+            for default_cmd in ("pytest", "python", "git status", "git diff"):
+                _add_unique(allow_rules, f"Bash({default_cmd}*)")
+
+        for srv in blueprint.mcp_servers:
+            _add_unique(allow_rules, f"mcp__{srv.id}__*")
+
+        for ag in all_agents:
+            for blocked in ag.permissions.blocked_commands:
+                if blocked.strip():
+                    _add_unique(deny_rules, f"Bash({blocked.strip()}*)")
+
         settings_payload = {
             "permissions": {
-                "allow": [
-                    "Read",
-                    "Grep",
-                    "Glob",
-                    "Task",
-                    "Bash(pytest*)",
-                    "Bash(python*)",
-                    "Bash(git status*)",
-                    "Bash(git diff*)",
-                ],
-                "deny": [
-                    f"Bash({cmd}*)" for cmd in blueprint.orchestrator.permissions.blocked_commands
-                ],
+                "allow": allow_rules,
+                "deny": deny_rules,
             },
             "hooks": {
                 "PreToolUse": [

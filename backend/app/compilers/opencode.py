@@ -94,45 +94,41 @@ class OpenCodeAdapter(HarnessAdapter):
             },
         }
 
-        from app.compilers.base import load_skill_bundle_files, resolve_effective_skill_slug
+        from app.compilers.base import (
+            is_tba_architecture,
+            load_skill_bundle_files,
+            render_agent_runtime_constraints_markdown,
+            resolve_effective_skill_slug,
+        )
 
+        blueprint.normalize_topology_edges()
         for sa in blueprint.subagents:
             model_id = self.resolve_agent_model(sa)
             sa_desc = json.dumps(f"{sa.name} — {sa.role}")
             sa_mcp_tools = _build_agent_mcp_tools(sa.mcp_servers)
             sa_mcp_yaml = "".join(f"  {k}: {str(v).lower()}\n" for k, v in sa_mcp_tools.items())
-            sa_mcp_note = (
-                f"\n## Assigned MCP Servers\nYou are authorized to use tools from: {', '.join(f'`{m}`' for m in sa.mcp_servers)}.\n"
-                if sa.mcp_servers
-                else ""
-            )
             sa_skills = blueprint.skills_for_agent(sa.id)
-            sa_skills_note = (
-                "\n## Assigned Skills\nApply the following skills when executing your tasks:\n"
-                + "\n".join(
-                    f"- **`/{resolve_effective_skill_slug(sk)}`** (`{sk.name}`): {sk.description}"
-                    for sk in sa_skills
-                )
-                + "\n"
-                if sa_skills
-                else ""
-            )
+            sa_constraints_md = render_agent_runtime_constraints_markdown(sa, sa_skills, model_id)
+            sa_tools_lower = {t.lower() for t in sa.tools}
             subagent_md = (
                 "---\n"
                 f"description: {sa_desc}\n"
                 "mode: all\n"
                 f"model: {model_id}\n"
+                f"max_turns: {sa.max_turns}\n"
                 "tools:\n"
+                f"  read: {str('read' in sa_tools_lower or not sa_tools_lower).lower()}\n"
+                f"  grep: {str('grep' in sa_tools_lower).lower()}\n"
+                f"  glob: {str('glob' in sa_tools_lower).lower()}\n"
                 f"  write: {str(sa.permissions.allow_write).lower()}\n"
                 f"  edit: {str(sa.permissions.allow_write).lower()}\n"
                 f"  bash: {str(sa.permissions.allow_shell).lower()}\n"
-                "  webfetch: false\n"
+                f"  webfetch: {str(sa.permissions.allow_network).lower()}\n"
                 + (sa_mcp_yaml if sa_mcp_yaml else "  playwright*: false\n")
                 + "---\n\n"
                 f"# {sa.name} (`{sa.id}`)\n\n"
                 f"{sa.system_prompt.strip()}\n"
-                f"{sa_skills_note}"
-                f"{sa_mcp_note}"
+                f"{sa_constraints_md}"
             )
             files.append(
                 CompiledFile(
@@ -144,12 +140,17 @@ class OpenCodeAdapter(HarnessAdapter):
             agent_config_map[sa.id] = {
                 "mode": "all",
                 "model": model_id,
+                "max_turns": sa.max_turns,
                 "description": f"{sa.name} — {sa.role}",
-                "prompt": f"# {sa.name} (`{sa.id}`)\n\n{sa.system_prompt.strip()}{sa_skills_note}{sa_mcp_note}",
+                "prompt": f"# {sa.name} (`{sa.id}`)\n\n{sa.system_prompt.strip()}\n{sa_constraints_md}",
                 "tools": {
+                    "read": "read" in sa_tools_lower or not sa_tools_lower,
+                    "grep": "grep" in sa_tools_lower,
+                    "glob": "glob" in sa_tools_lower,
                     "write": sa.permissions.allow_write,
                     "edit": sa.permissions.allow_write,
                     "bash": sa.permissions.allow_shell,
+                    "webfetch": sa.permissions.allow_network,
                     **sa_mcp_tools,
                 },
             }
@@ -197,68 +198,75 @@ class OpenCodeAdapter(HarnessAdapter):
                 )
             )
 
+        subagent_list_str = (
+            ", ".join(f"`@{sa.id}`" for sa in blueprint.subagents) if blueprint.subagents else "*none (solo orchestrator)*"
+        )
+        skill_list_str = (
+            ", ".join(f"`/{resolve_effective_skill_slug(sk)}`" for sk in blueprint.skills)
+            if blueprint.skills
+            else "*none*"
+        )
+
         eval_cmd_md = (
             "---\n"
-            'description: "Summarize completed deliverables so the user can click Evaluate Project in HarnessForge Studio"\n'
+            f'description: "Summarize completed deliverables for {blueprint.metadata.name} so the user can click Evaluate Project in HarnessForge Studio"\n'
             "---\n\n"
-            "Do NOT run any python or shell commands. Instead:\n"
-            "1. Confirm that `WORKFLOWS_AND_DELIVERY_DOCS.md` and `EPICS_AND_USER_STORIES.md` exist in the current workspace.\n"
-            "2. Print a concise summary of the Epics (`EPIC-xx`), User Stories (`US-xxx`), and Mermaid Workflow Diagrams produced.\n"
+            f"1. Summarize all deliverables and code/document changes produced by `@{orch_id}` and subagents ({subagent_list_str}) in this workspace.\n"
+            "2. Confirm that all expected outputs and tests for the active benchmark task are present on disk.\n"
             "3. Tell the user: **'Deliverables are ready on disk! Switch to HarnessForge Studio and click `2. Evaluate Project` to view your 4-Layer Evaluation Scorecard and AI Architecture Advisor recommendations.'**\n"
         )
         files.append(
             CompiledFile(
                 relative_path=".opencode/command/evaluate-project.md",
                 content=eval_cmd_md,
-                description="OpenCode `/evaluate-project` command (zero-Python workspace check)",
+                description="OpenCode `/evaluate-project` command",
             )
         )
 
         verify_cmd_md = (
             "---\n"
-            'description: "Verify that all HarnessForge agents are installed and confirm read access to external documentation folders"\n'
+            f'description: "Verify installed agents and configuration for {blueprint.metadata.name}"\n'
             "---\n\n"
-            "Do NOT run any python or bash commands. Perform a 3-step installation and documentation access health check using file read tools only:\n"
-            "1. Confirm your active agent identity and list all subagents available in `AGENTS.md`.\n"
-            "2. Read the **External Reference Documentation Manifest** section in `AGENTS.md`, "
-            "read the first file from each documentation subfolder (`initial_customer_requirements/`, `workshops/`, `bor_dor_and_dod/`), "
-            "and confirm you can read its contents without permission errors.\n"
-            "3. Print a concise `SETUP VERIFIED: READY (Zero-Python Mode)` checklist showing the installed agents, commands, and readable documentation files.\n"
+            "Perform a 3-step installation health check using file read tools:\n"
+            f"1. Confirm the active architecture `{blueprint.metadata.name}` (`{blueprint.metadata.id}`) in `AGENTS.md`.\n"
+            f"2. Confirm the configured orchestrator (`@{orch_id}`), subagents ({subagent_list_str}), and skills ({skill_list_str}).\n"
+            "3. If an **External Reference Documentation Directory** section exists in `AGENTS.md`, verify its files are readable, then print a concise `SETUP VERIFIED: READY` checklist.\n"
         )
         files.append(
             CompiledFile(
                 relative_path=".opencode/command/verify-setup.md",
                 content=verify_cmd_md,
-                description="OpenCode `/verify-setup` command to confirm agent installation and external documentation readability",
+                description="OpenCode `/verify-setup` command to confirm agent installation",
             )
         )
 
-        gen_tba_cmd_md = (
-            "---\n"
-            'description: "Execute the full TBA pipeline: read external workshops & customer requirements and produce Workflows and User Stories"\n'
-            "---\n\n"
-            "IMPORTANT: Work strictly with file read/write tools only. Do NOT run python, pytest, bash commands, or web browsers.\n\n"
-            "Execute the complete multi-agent pipeline using the files listed in **Section 7 (External Reference Documentation Directory)** of `AGENTS.md`:\n"
-            "1. Delegate to `@requirements_elicitor` to read all files in `initial_customer_requirements/`, `workshops/`, and `bor_dor_and_dod/` from the external documentation directory and catalog `BR-001`..`BR-020` and `NFR-001`..`NFR-006`.\n"
-            "2. Delegate to `@workflow_architect` to author `WORKFLOWS_AND_DELIVERY_DOCS.md` in the current workspace containing:\n"
-            "   - End-to-End Process Workflow (`flowchart TD` Mermaid diagram)\n"
-            "   - Actor & System Sequence Diagram (`sequenceDiagram` Mermaid diagram)\n"
-            "   - 5-State Task Lifecycle State Diagram (`stateDiagram-v2` Mermaid diagram)\n"
-            "   - Data Dictionary & RBAC/API Error Contract.\n"
-            "3. Delegate to `@user_story_author` to author `EPICS_AND_USER_STORIES.md` in the current workspace containing:\n"
-            "   - Epics Catalog (`EPIC-01`..`EPIC-05`)\n"
-            "   - User Stories (`US-101`..`US-106`) with Connextra statements (`As a <role>, I want <goal>, so that <benefit>`), Ron Jeffries' 3 Cs (**Card**, **Conversation** for the Development Team, **Confirmation** with BDD `Given / When / Then` scenarios & `TC-xxx` IDs for the Testing Team), and Bill Wake's **INVEST** checklist\n"
-            "   - Definition of Ready (DoR) & Definition of Done (DoD)\n"
-            "   - Requirements Traceability Matrix (RTM) mapping `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `TC-xxx`.\n"
-            "4. Delegate to `@ba_qa_gatekeeper` to review both markdown files using `read` and confirm `VERDICT: PASS`.\n"
-        )
-        files.append(
-            CompiledFile(
-                relative_path=".opencode/command/generate-tba-pack.md",
-                content=gen_tba_cmd_md,
-                description="OpenCode `/generate-tba-pack` command to run the end-to-end TBA deliverable generation task",
+        if is_tba_architecture(blueprint):
+            gen_tba_cmd_md = (
+                "---\n"
+                'description: "Execute the full TBA pipeline: read external workshops & customer requirements and produce Workflows and User Stories"\n'
+                "---\n\n"
+                "IMPORTANT: Work strictly with file read/write tools only. Do NOT run python, pytest, bash commands, or web browsers.\n\n"
+                "Execute the complete multi-agent pipeline using the files listed in **Section 7 (External Reference Documentation Directory)** of `AGENTS.md`:\n"
+                "1. Delegate to `@requirements_elicitor` to read all files in `initial_customer_requirements/`, `workshops/`, and `bor_dor_and_dod/` from the external documentation directory and catalog `BR-001`..`BR-020` and `NFR-001`..`NFR-006`.\n"
+                "2. Delegate to `@workflow_architect` to author `WORKFLOWS_AND_DELIVERY_DOCS.md` in the current workspace containing:\n"
+                "   - End-to-End Process Workflow (`flowchart TD` Mermaid diagram)\n"
+                "   - Actor & System Sequence Diagram (`sequenceDiagram` Mermaid diagram)\n"
+                "   - 5-State Task Lifecycle State Diagram (`stateDiagram-v2` Mermaid diagram)\n"
+                "   - Data Dictionary & RBAC/API Error Contract.\n"
+                "3. Delegate to `@user_story_author` to author `EPICS_AND_USER_STORIES.md` in the current workspace containing:\n"
+                "   - Epics Catalog (`EPIC-01`..`EPIC-05`)\n"
+                "   - User Stories (`US-101`..`US-106`) with Connextra statements (`As a <role>, I want <goal>, so that <benefit>`), Ron Jeffries' 3 Cs (**Card**, **Conversation** for the Development Team, **Confirmation** with BDD `Given / When / Then` scenarios & `TC-xxx` IDs for the Testing Team), and Bill Wake's **INVEST** checklist\n"
+                "   - Definition of Ready (DoR) & Definition of Done (DoD)\n"
+                "   - Requirements Traceability Matrix (RTM) mapping `BR-xxx` -> `EPIC-xx` -> `US-xxx` -> `TC-xxx`.\n"
+                "4. Delegate to `@ba_qa_gatekeeper` to review both markdown files using `read` and confirm `VERDICT: PASS`.\n"
             )
-        )
+            files.append(
+                CompiledFile(
+                    relative_path=".opencode/command/generate-tba-pack.md",
+                    content=gen_tba_cmd_md,
+                    description="OpenCode `/generate-tba-pack` command to run the end-to-end TBA deliverable generation task",
+                )
+            )
 
         # 4. opencode.json (Root config, custom enterprise providers, agent roster, permissions, MCP servers)
         from app.compilers.base import get_harness_models_config
@@ -379,15 +387,16 @@ function writeJson(filePath: string, data: Record<string, any>): void {
 
 async function emitTelemetry(eventType: string, toolName: string, toolInput: Record<string, any>) {
   const cfg = readJson(CONFIG_PATH, {});
+  const orchId = cfg.orchestrator?.id || cfg.entry_node || "root_orchestrator";
   const state = readJson(STATE_PATH, {
     run_id: cfg.run_id || "deployed-run",
-    active_agent: "root_orchestrator",
-    visited_nodes: ["root_orchestrator"],
+    active_agent: orchId,
+    visited_nodes: [orchId],
     tool_calls_count: 0,
   });
 
   const subagents = cfg.subagents || {};
-  let activeAgent = state.active_agent || "root_orchestrator";
+  let activeAgent = state.active_agent || orchId;
   let resolvedEventType = eventType;
   let message = `Executed tool ${toolName}`;
 
@@ -397,7 +406,7 @@ async function emitTelemetry(eventType: string, toolName: string, toolInput: Rec
       if (rawArgs.includes(saId.toLowerCase())) {
         activeAgent = saId;
         state.active_agent = saId;
-        if (!Array.isArray(state.visited_nodes)) state.visited_nodes = ["root_orchestrator"];
+        if (!Array.isArray(state.visited_nodes)) state.visited_nodes = [orchId];
         if (!state.visited_nodes.includes(saId)) state.visited_nodes.push(saId);
         resolvedEventType = eventType === "PreToolUse" ? "SubagentStart" : "SubagentStop";
         message = `${resolvedEventType}: @${saId}`;
