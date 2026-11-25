@@ -146,19 +146,43 @@ Follow these 6 simple steps in the Web Studio (`http://localhost:5173`) to compl
 - **`YAML Spec (2-Way)` Sub-Tab**:
   - Every drag, prompt edit, or permission toggle on the visual canvas automatically updates the YAML specification.
   - You can also type or paste YAML directly into the editor and click **`Apply & Save YAML`** to update the visual canvas.
-- **`Compiled Harness Files` Sub-Tab & Exporter**:
-  - Preview every file generated for **Claude Code**, **Antigravity**, or **OpenCode**.
-  - **Direct Export to Your Real Project**: Type any folder path on your computer (e.g., `D:\MyRealApp`) into the export box at the bottom right and click **`Export`**. HarnessForge writes all native subagents, rules, skills, and hooks directly into that folder so you can immediately open Claude Code, Antigravity, or OpenCode there!
+- **`Compiled` Sub-Tab (`1. Deploy & Link Docs` & `2. Evaluate Project`)**:
+  - Preview every file generated for **Claude Code**, **Antigravity (AGY)**, or **OpenCode**.
+  - **Field 0 — Architecture Blueprint to Deploy**: The active multi-agent blueprint being compiled and exported.
+  - **Field 1 — Target Project Workspace Folder**: Any folder on your computer (e.g., `D:\Projects\my-app`) where HarnessForge writes the native agents, skills, commands, and hooks.
+  - **Field 2 — External Reference Documentation Folder (Optional)**: A separate folder containing customer requirements, workshops, or specs that your agents need read access to without copying them into the code repo.
+  - **Field 3 — Evaluation Benchmark Task *(Verifiers used when clicking "2. Evaluate Project")***:
+    - **What it is**: The **grading checklist / automated verifier suite** that HarnessForge runs against your Target Project Workspace Folder when you click **`2. Evaluate Project`**.
+    - **Why choosing the right task matters**: Every Benchmark Task defines its own **Layer 1 Deterministic Verifiers** (which account for **45%** of your total score). Always match the selected task to the work your agents actually performed in that folder:
+
+      | Project Type / Workflow | Recommended Evaluation Benchmark Task | What Layer 1 Verifies on Disk |
+      | :--- | :--- | :--- |
+      | **Technical Business Analyst (FocusFlow)** | `FocusFlow To-Do Application — Full Technical BA Discovery & Delivery Pack` (`tba-focusflow-todo-app`) | Checks `EPICS_AND_USER_STORIES.md` (Connextra stories, 3 Cs Dev/QA, BDD `Given/When/Then`, `TC-xxx`, INVEST, DoR/DoD, RTM) & `WORKFLOWS_AND_DELIVERY_DOCS.md` (valid Mermaid `flowchart`/`sequenceDiagram`/`stateDiagram-v2` diagrams) + FocusFlow domain rules. |
+      | **Technical Business Analyst (Chargeback)** | `TBA Chargeback Dispute System` (`tba-chargeback-dispute-system`) | Checks Chargeback BA deliverables (`EPICS_AND_USER_STORIES.md` & `WORKFLOWS_AND_DELIVERY_DOCS.md`) and domain thresholds. |
+      | **Business Consulting** | `Consulting SaaS Turnaround` (`consulting-saas-turnaround`) | Checks `EXECUTIVE_MEMO.md` structure, unit economics, and 90-day roadmap. |
+      | **Python Coding Benchmarks** | `Fix Token Expiration Bug` / `Sliding Window Rate Limiter` / `Refactor Order Pricing` | Runs `pytest -v` against the matching test file and audits `git diff` size/targets. |
+      | **Your Own Code / UI Project** | Create a custom task in **Tab 2 (`2. Benchmark Tasks`)** | Runs your own commands (e.g., `npm run build`, `npx tsc -b`, `npx vitest run`, `pytest -v`, `file_exists`, regex checks). |
+
+    - **What happens step-by-step when you click `2. Evaluate Project`**:
+      1. **Ingests Session Telemetry**: Reads `.harness-eval/state.json` and `.harness-eval/telemetry.jsonl` from your Target Project Workspace Folder (capturing every tool call, subagent handoff, duration, estimated tokens, and any blocked guardrail violations).
+      2. **Runs Layer 1 Deterministic Verifiers (45% of score)**: Executes every verifier defined in the selected **Evaluation Benchmark Task** directly inside your Target Project Workspace Folder. *(Note: No-code BA/Document verifiers do **not** require Python to be installed in your target workspace.)*
+      3. **Computes Layer 2 & Layer 3 Scores (55% of score)**: Grades **Topology Adherence (20%)**, **Efficiency (15%)**, and **Qualitative Judge Dimensions (20%)**, then opens **Tab 4 (`4. Evaluation Scorecard`)**.
+      4. **Feeds Tab 5 & Tab 6**: Saves the evaluated run so you can compare harnesses side-by-side in **Tab 5 (`A/B Matrix`)** (e.g., Antigravity vs. OpenCode) and generate targeted `v2` blueprint fixes in **Tab 6 (`AI Advisor`)** for any verifier that failed.
 
 ### Tab 2: Benchmark Tasks & Verifiers
-Use this tab to define the coding challenges and automated grading checks used to test your architectures:
-- **Task Prompt**: The exact problem statement sent to the coding harness.
-- **Deterministic Outcome Verifiers**: Automated checks run inside the sandbox after the agent finishes:
-  - `pytest_pass`: Runs `pytest -v` and checks that all unit tests pass (`exit_code == 0`).
-  - `command_exit_code`: Runs any custom shell command (e.g., `npm test`, `ruff check`, `mypy`).
-  - `file_exists`: Confirms a specific file was created or preserved.
-  - `file_contains_regex` / `file_not_contains_regex`: Checks that a pattern exists (or that `TODO` / `NotImplementedError` was removed).
-  - `git_diff_contains` / `git_diff_max_lines`: Confirms the expected file was modified and that the agent kept its changes concise.
+Use this tab to inspect, edit, or create the **Evaluation Benchmark Tasks** that appear in Field 3 (`Evaluation Benchmark Task`) and Tab 3:
+- **Task Prompt**: The problem statement sent to the harness when running headless or simulated benchmarks.
+- **Deterministic Outcome Verifiers (Layer 1 — 45% of Composite Score)**:
+  - **Code & CLI Verifiers**:
+    - `pytest_pass`: Runs `pytest -v` (or a specified pytest command) and checks `exit_code == 0`.
+    - `command_exit_code`: Runs any custom shell command (e.g., `npm run build`, `npx tsc -b`, `npx vitest run`, `ruff check`, `mypy`) and checks `exit_code == 0`.
+    - `git_diff_contains` / `git_diff_max_lines`: Confirms expected source files were modified and changes stay concise.
+  - **No-Code Document & Business Analyst Verifiers**:
+    - `user_story_invest_check`: Audits `EPICS_AND_USER_STORIES.md` for Connextra user stories (single- or multi-line), Ron Jeffries' 3 Cs (`EPIC-xx`/`US-xxx` Card, Developer Conversation, QA Confirmation with BDD `Given/When/Then` scenarios & `TC-xxx` IDs), Bill Wake's INVEST checklist, and DoR/DoD.
+    - `markdown_sections_present`: Confirms all required headings/sections (e.g., `Epics`, `User Stories`, `Traceability Matrix`) exist in a target Markdown file.
+    - `mermaid_diagram_valid`: Validates fenced ```` ```mermaid ```` blocks (`flowchart`, `sequenceDiagram`, `stateDiagram-v2`, `erDiagram`) in `WORKFLOWS_AND_DELIVERY_DOCS.md`.
+    - `file_exists` / `file_contains_regex` / `file_not_contains_regex`: Confirms deliverables exist and contain required domain rules (or no `TODO` placeholders).
+- **Weights & Required Flag**: Each verifier has a `weight` (controls its share of the 100% Layer 1 score) and `required: true/false` (if any `required` verifier fails, the run is flagged as incomplete and surfaced in **Tab 6: AI Advisor**).
 
 ### Tab 3: Execute & Trace (3 Execution Modes)
 When launching a run from the left panel of Tab 3, you can choose between **3 Execution Modes**:
@@ -278,7 +302,7 @@ Everything you can do in the Web Studio can also be automated from PowerShell us
 
 ## Part 7: Designing & Evaluating a Technical Business Analyst (TBA) System
 
-> **Non-Coding / Specification Delivery Mode**: When you use HarnessForge for **Technical Business Analysis (TBA)** or **Business Consulting**, your agents produce **Epics, User Stories, Mermaid Process Workflows, Data Dictionaries, and Traceability Matrices** rather than application source code. Most importantly, the **User Story** is the formal interface contract between the **Development Team** and the **Testing (QA) Team** (following the [Wikipedia User Story standard](https://en.wikipedia.org/wiki/User_story)).
+> **Non-Coding / Specification Delivery Mode**: When you use HarnessForge for **Technical Business Analysis (TBA)** or **Business Consulting**, your agents produce **Epics, User Stories, Mermaid Process Workflows, Data Dictionaries, and Traceability Matrices** rather than application source code. Most importantly, the **User Story** is the formal interface contract between the **Development Team** and the **Testing (QA) Team** (following the Connextra, Ron Jeffries' 3 Cs, and Bill Wake's INVEST User Story standard).
 
 ### 7.1 Built-In Technical Business Analyst Architecture (`technical-business-analyst.yaml`)
 
