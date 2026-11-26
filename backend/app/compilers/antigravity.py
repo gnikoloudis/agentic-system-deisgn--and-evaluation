@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.compilers.base import HarnessAdapter
 from app.compilers.hook_templates import generate_harness_eval_files
@@ -39,6 +39,7 @@ class AntigravityAdapter(HarnessAdapter):
         blueprint: AgentArchitecture,
         run_id: str = "preview-run",
         server_url: str = "http://127.0.0.1:8765",
+        workspace_dir: Optional[str] = None,
     ) -> CompilationResult:
         files: List[CompiledFile] = []
 
@@ -47,6 +48,7 @@ class AntigravityAdapter(HarnessAdapter):
             load_skill_bundle_files,
             render_agent_runtime_constraints_markdown,
             resolve_effective_skill_slug,
+            resolve_mcp_args,
         )
 
         blueprint.normalize_topology_edges()
@@ -342,11 +344,13 @@ class AntigravityAdapter(HarnessAdapter):
                         entry["env"] = srv.env
                     mcp_servers_map[srv.id] = entry
                 else:
-                    mcp_servers_map[srv.id] = {
+                    entry = {
                         "command": srv.command or "npx",
-                        "args": srv.args,
-                        "env": srv.env,
+                        "args": resolve_mcp_args(srv.args, workspace_dir),
                     }
+                    if srv.env:
+                        entry["env"] = srv.env
+                    mcp_servers_map[srv.id] = entry
             mcp_payload = {"mcpServers": mcp_servers_map}
             files.append(
                 CompiledFile(

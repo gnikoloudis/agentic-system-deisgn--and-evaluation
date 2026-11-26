@@ -823,6 +823,69 @@ def test_generated_agent_files_match_canvas_details_and_omit_tba_for_non_tba():
     assert any("generate-tba-pack" in f.relative_path for f in tba_oc.files)
 
 
+def test_mcp_workspace_path_resolution_and_clean_json_output(tmp_path: Path):
+    """Verify standard mcpServers config (e.g. codegraph with ${WORKSPACE} arg & empty env) compiles cleanly across all 3 harnesses."""
+    from app.schemas.blueprint import MCPServerSpec
+
+    bp_tuple = get_blueprint("solo-generalist")
+    assert bp_tuple is not None
+    bp = bp_tuple[0].model_copy(deep=True)
+    bp.mcp_servers = [
+        MCPServerSpec(
+            id="codegraph",
+            description="CodeGraph AST indexer",
+            transport="stdio",
+            command="npx",
+            args=["-y", "@cartographai/mcp-server-codegraph", "${WORKSPACE}"],
+            env={},
+        )
+    ]
+    bp.orchestrator.mcp_servers = ["codegraph"]
+
+    target_dir = tmp_path / "My Project Folder"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    expected_posix = str(target_dir.resolve()).replace("\\", "/")
+
+    # 1. Preview mode (workspace_dir=None) preserves ${WORKSPACE} placeholder and omits empty env
+    cc_preview = compile_architecture(bp, harness="claude_code", run_id="mcp-preview")
+    cc_preview_mcp = json.loads(
+        next(f.content for f in cc_preview.files if f.relative_path == ".mcp.json")
+    )["mcpServers"]["codegraph"]
+    assert cc_preview_mcp == {
+        "command": "npx",
+        "args": ["-y", "@cartographai/mcp-server-codegraph", "${WORKSPACE}"],
+    }
+
+    # 2. Deploy mode (workspace_dir=target_dir) resolves ${WORKSPACE} with forward slashes across all 3 harnesses
+    cc_dep = compile_architecture(bp, harness="claude_code", run_id="mcp-dep", workspace_dir=str(target_dir))
+    cc_dep_mcp = json.loads(
+        next(f.content for f in cc_dep.files if f.relative_path == ".mcp.json")
+    )["mcpServers"]["codegraph"]
+    assert cc_dep_mcp == {
+        "command": "npx",
+        "args": ["-y", "@cartographai/mcp-server-codegraph", expected_posix],
+    }
+
+    agy_dep = compile_architecture(bp, harness="antigravity", run_id="mcp-dep", workspace_dir=str(target_dir))
+    agy_dep_mcp = json.loads(
+        next(f.content for f in agy_dep.files if f.relative_path == ".agents/mcp_config.json")
+    )["mcpServers"]["codegraph"]
+    assert agy_dep_mcp == {
+        "command": "npx",
+        "args": ["-y", "@cartographai/mcp-server-codegraph", expected_posix],
+    }
+
+    oc_dep = compile_architecture(bp, harness="opencode", run_id="mcp-dep", workspace_dir=str(target_dir))
+    oc_dep_mcp = json.loads(
+        next(f.content for f in oc_dep.files if f.relative_path == "opencode.json")
+    )["mcp"]["codegraph"]
+    assert oc_dep_mcp == {
+        "type": "local",
+        "command": ["npx", "-y", "@cartographai/mcp-server-codegraph", expected_posix],
+        "enabled": True,
+    }
+
+
 
 
 

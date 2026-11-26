@@ -394,6 +394,26 @@ def load_skill_bundle_files(sk: SkillSpec, target_skill_root: str) -> tuple[List
     return compiled, sk.instructions
 
 
+def resolve_mcp_args(args: List[str], workspace_dir: Optional[str] = None) -> List[str]:
+    """Resolve dynamic workspace path placeholders (${WORKSPACE}, ${workspaceFolder}, ${PROJECT_DIR}) in MCP args.
+
+    Always normalizes resolved paths to forward slashes (e.g. D:/MyProject) for cross-platform JSON & Node/npx safety.
+    When `workspace_dir` is None (e.g. Studio live preview), placeholders are preserved verbatim.
+    """
+    if not workspace_dir:
+        return list(args)
+    resolved_posix = str(Path(workspace_dir).resolve()).replace("\\", "/")
+    placeholders = ("${WORKSPACE}", "${workspaceFolder}", "${PROJECT_DIR}", "$WORKSPACE")
+    out: List[str] = []
+    for raw_arg in args:
+        val = raw_arg
+        for ph in placeholders:
+            if ph in val:
+                val = val.replace(ph, resolved_posix)
+        out.append(val)
+    return out
+
+
 def is_tba_architecture(bp: AgentArchitecture) -> bool:
     """Return True only when the blueprint represents a Technical Business Analyst (TBA) architecture."""
     bp_id = (bp.metadata.id or "").lower()
@@ -614,6 +634,7 @@ class HarnessAdapter(ABC):
         blueprint: AgentArchitecture,
         run_id: str = "preview-run",
         server_url: str = "http://127.0.0.1:8765",
+        workspace_dir: Optional[str] = None,
     ) -> CompilationResult:
         """Compile blueprint into target harness files and CLI invocation commands."""
         raise NotImplementedError

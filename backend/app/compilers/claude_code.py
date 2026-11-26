@@ -13,7 +13,7 @@ Compiles AgentArchitecture into:
 from __future__ import annotations
 
 import json
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.compilers.base import HarnessAdapter
 from app.compilers.hook_templates import generate_harness_eval_files
@@ -52,6 +52,7 @@ class ClaudeCodeAdapter(HarnessAdapter):
         blueprint: AgentArchitecture,
         run_id: str = "preview-run",
         server_url: str = "http://127.0.0.1:8765",
+        workspace_dir: Optional[str] = None,
     ) -> CompilationResult:
         files: List[CompiledFile] = []
 
@@ -235,6 +236,8 @@ class ClaudeCodeAdapter(HarnessAdapter):
         )
 
         # 5. MCP Servers -> .mcp.json (supports stdio, sse, and http transports)
+        from app.compilers.base import resolve_mcp_args
+
         if blueprint.mcp_servers:
             mcp_servers_map: Dict[str, Any] = {}
             for srv in blueprint.mcp_servers:
@@ -244,11 +247,13 @@ class ClaudeCodeAdapter(HarnessAdapter):
                         entry["env"] = srv.env
                     mcp_servers_map[srv.id] = entry
                 else:
-                    mcp_servers_map[srv.id] = {
+                    entry = {
                         "command": srv.command or "npx",
-                        "args": srv.args,
-                        "env": srv.env,
+                        "args": resolve_mcp_args(srv.args, workspace_dir),
                     }
+                    if srv.env:
+                        entry["env"] = srv.env
+                    mcp_servers_map[srv.id] = entry
             mcp_payload = {"mcpServers": mcp_servers_map}
             files.append(
                 CompiledFile(

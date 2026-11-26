@@ -256,7 +256,9 @@ You can design, simulate, and grade architectures completely on your own. When y
 
 > **Box for IT / Engineering Support**
 > 1. **Enterprise LLM Gateway (Company AI Models)**: In **Tab 1 → Right Panel → `Models`** (with **OpenCode** selected), IT can register an internal OpenAI-compatible gateway URL, API key environment variable name, custom headers, and approved model IDs. Once saved, those models appear in every specialist's Model dropdown.
-> 2. **Connecting External Tools (MCP Servers)**: In **Tab 1**, add an **MCP Server** card (e.g., Jira, Confluence, GitHub, Figma, Postgres) with its command or URL. You can then drag-and-drop it onto *only* the specialists that should have access.
+> 2. **Connecting External Tools (MCP Servers)**: In **Tab 1**, click **`Import MCP JSON (mcpServers)`** to paste a standard JSON snippet directly from any tool's setup guide (such as `codegraph`, Jira, Confluence, GitHub, Figma, or Postgres).
+>    - **Configuring `/path/to/directory` parameters**: Leave **`Auto-replace "/path/to/directory" with "${WORKSPACE}"`** checked if you want the tool to automatically inspect whichever project folder you deploy to. If the tool should always point to one fixed folder, enter that folder path on its own line in the **Arguments** box using forward slashes (e.g., `D:/Projects/My App` — spaces are preserved).
+>    - Choose which specialists should have access using the checkboxes or by dragging a line between the purple MCP card and a specialist on the canvas.
 > 3. **Deploying to a Real Project Folder & Linking Docs**: In **Tab 1 → Right Panel → `Compiled Files`**, enter:
 >    - **Target Project Workspace Folder** (where deliverables will be saved),
 >    - **External Documentation Folder** (where your stakeholder workshops and requirements live),

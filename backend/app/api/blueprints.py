@@ -180,7 +180,13 @@ def api_export_to_directory(architecture_id: str, req: ExportToDirectoryRequest)
 
     run_id = f"deploy-{uuid.uuid4().hex[:8]}"
     server_url = f"http://{settings.host}:{settings.port}"
-    compilation = compile_architecture(bp, harness=req.harness, run_id=run_id, server_url=server_url)
+    compilation = compile_architecture(
+        bp,
+        harness=req.harness,
+        run_id=run_id,
+        server_url=server_url,
+        workspace_dir=str(target_path),
+    )
 
     # Inject External Reference Documentation Manifest into root instruction files & subagent definitions
     # so agents deployed in ANY workspace folder know the exact absolute paths of the external docs.

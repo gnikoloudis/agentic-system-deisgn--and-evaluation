@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import re
 import sys
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.compilers.base import HarnessAdapter
 from app.compilers.hook_templates import generate_harness_eval_files
@@ -30,6 +30,7 @@ class OpenCodeAdapter(HarnessAdapter):
         blueprint: AgentArchitecture,
         run_id: str = "preview-run",
         server_url: str = "http://127.0.0.1:8765",
+        workspace_dir: Optional[str] = None,
     ) -> CompilationResult:
         files: List[CompiledFile] = []
 
@@ -322,6 +323,8 @@ class OpenCodeAdapter(HarnessAdapter):
         }
         if provider_config_map:
             opencode_json["provider"] = provider_config_map
+        from app.compilers.base import resolve_mcp_args
+
         if blueprint.mcp_servers:
             mcp_map: Dict[str, Any] = {}
             for srv in blueprint.mcp_servers:
@@ -332,12 +335,15 @@ class OpenCodeAdapter(HarnessAdapter):
                         "enabled": True,
                     }
                 else:
-                    mcp_map[srv.id] = {
+                    resolved_args = resolve_mcp_args(srv.args, workspace_dir)
+                    oc_mcp_entry: Dict[str, Any] = {
                         "type": "local",
-                        "command": [srv.command or "npx", *srv.args],
-                        "environment": srv.env,
+                        "command": [srv.command or "npx", *resolved_args],
                         "enabled": True,
                     }
+                    if srv.env:
+                        oc_mcp_entry["environment"] = srv.env
+                    mcp_map[srv.id] = oc_mcp_entry
             opencode_json["mcp"] = mcp_map
         else:
             # Disable global Playwright browser MCP in local workspace runs so agents don't pop up Chrome windows

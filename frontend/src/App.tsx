@@ -71,6 +71,15 @@ export default function App() {
   const [newCmdAgent, setNewCmdAgent] = useState<string>("");
   const [editingCmdId, setEditingCmdId] = useState<string | null>(null);
 
+  // MCP JSON Importer modal state
+  const [showMcpJsonModal, setShowMcpJsonModal] = useState<boolean>(false);
+  const [mcpJsonInput, setMcpJsonInput] = useState<string>(
+    `{\n  "mcpServers": {\n    "codegraph": {\n      "command": "npx",\n      "args": [\n        "-y",\n        "@cartographai/mcp-server-codegraph",\n        "/path/to/directory"\n      ]\n    }\n  }\n}`
+  );
+  const [mcpAutoReplacePathPlaceholder, setMcpAutoReplacePathPlaceholder] = useState<boolean>(true);
+  const [mcpImportAssignAgents, setMcpImportAssignAgents] = useState<string[]>([]);
+  const [mcpJsonError, setMcpJsonError] = useState<string | null>(null);
+
   const [previewHarness, setPreviewHarness] = useState<HarnessType>("claude_code");
   const [harnessModels, setHarnessModels] = useState<HarnessModelsConfig | null>(null);
   const [newCustomModelId, setNewCustomModelId] = useState<string>("");
@@ -960,6 +969,138 @@ export default function App() {
     notify(`Deleted MCP server '${mcpId}'`);
   };
 
+  const handleImportMcpJson = () => {
+    if (!selectedBlueprint) return;
+    setMcpJsonError(null);
+    try {
+      // Lenient JSON cleanup: strip // and /* */ comments and trailing commas before } or ]
+      const cleaned = mcpJsonInput
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "")
+        .replace(/,\s*([}\]])/g, "$1")
+        .trim();
+      const parsed = JSON.parse(cleaned);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error('Expected a JSON object such as {"mcpServers": { ... }}.');
+      }
+
+      const rawServersObj: Record<string, Record<string, unknown>> =
+        parsed.mcpServers && typeof parsed.mcpServers === "object"
+          ? parsed.mcpServers
+          : parsed.mcp && typeof parsed.mcp === "object"
+            ? parsed.mcp
+            : parsed;
+
+      const entries = Object.entries(rawServersObj).filter(
+        ([, val]) => val && typeof val === "object" && !Array.isArray(val)
+      );
+      if (entries.length === 0) {
+        throw new Error("No MCP server entries found inside the JSON object.");
+      }
+
+      const pathPlaceholderRe = /^(\/path\/to\/[a-z0-9._-]+|<path-to-[a-z0-9._-]+>|<workspace>|<project-dir>)$/i;
+      const existingServers = [...(selectedBlueprint.mcp_servers || [])];
+      const nextLayout = { ...(selectedBlueprint.visual_layout?.nodes || {}) };
+      const importedIds: string[] = [];
+
+      entries.forEach(([rawId, cfg], idx) => {
+        const id = rawId.trim().replace(/\s+/g, "-").toLowerCase();
+        if (!id) return;
+        const urlVal =
+          typeof cfg.url === "string"
+            ? cfg.url
+            : typeof cfg.serverUrl === "string"
+              ? cfg.serverUrl
+              : undefined;
+        const rawType = typeof cfg.type === "string" ? cfg.type.toLowerCase() : "";
+        const transport: "stdio" | "sse" | "http" =
+          urlVal || rawType === "sse" || rawType === "http" || rawType === "remote"
+            ? rawType === "http"
+              ? "http"
+              : "sse"
+            : "stdio";
+
+        let command: string | undefined = typeof cfg.command === "string" ? cfg.command : undefined;
+        let args: string[] = Array.isArray(cfg.args) ? cfg.args.map((a) => String(a)) : [];
+        if (Array.isArray(cfg.command) && cfg.command.length > 0) {
+          command = String(cfg.command[0]);
+          args = cfg.command.slice(1).map((a) => String(a));
+        }
+        if (mcpAutoReplacePathPlaceholder) {
+          args = args.map((a) => (pathPlaceholderRe.test(a.trim()) ? "${WORKSPACE}" : a));
+        }
+
+        const rawEnv =
+          (cfg.env && typeof cfg.env === "object" ? cfg.env : null) ||
+          (cfg.environment && typeof cfg.environment === "object" ? cfg.environment : null);
+        const env: Record<string, string> = {};
+        if (rawEnv) {
+          Object.entries(rawEnv as Record<string, unknown>).forEach(([k, v]) => {
+            if (k.trim()) env[k.trim()] = String(v ?? "");
+          });
+        }
+
+        const desc =
+          typeof cfg.description === "string" && cfg.description.trim()
+            ? cfg.description.trim()
+            : transport === "stdio"
+              ? `Stdio MCP server (${command || "npx"} ${args.slice(0, 2).join(" ")})`.trim()
+              : `Remote MCP server (${urlVal || transport})`;
+
+        const serverSpec = {
+          id,
+          description: desc,
+          transport,
+          command: transport === "stdio" ? command || "npx" : undefined,
+          args: transport === "stdio" ? args : [],
+          url: transport !== "stdio" ? urlVal || "" : undefined,
+          env,
+        };
+
+        const existingIdx = existingServers.findIndex((m) => m.id === id);
+        if (existingIdx >= 0) {
+          existingServers[existingIdx] = serverSpec;
+        } else {
+          existingServers.push(serverSpec);
+          nextLayout[id] = { x: 700, y: 260 + (existingServers.length - 1 + idx) * 125 };
+        }
+        importedIds.push(id);
+      });
+
+      if (importedIds.length === 0) {
+        throw new Error("Could not parse any valid MCP server IDs.");
+      }
+
+      const orchAssign = mcpImportAssignAgents.includes(selectedBlueprint.orchestrator.id);
+      const nextOrchMcps = orchAssign
+        ? Array.from(new Set([...(selectedBlueprint.orchestrator.mcp_servers || []), ...importedIds]))
+        : selectedBlueprint.orchestrator.mcp_servers || [];
+
+      const nextSubagents = selectedBlueprint.subagents.map((sa) =>
+        mcpImportAssignAgents.includes(sa.id)
+          ? { ...sa, mcp_servers: Array.from(new Set([...(sa.mcp_servers || []), ...importedIds])) }
+          : sa
+      );
+
+      handleCanvasBlueprintChange({
+        ...selectedBlueprint,
+        mcp_servers: existingServers,
+        orchestrator: { ...selectedBlueprint.orchestrator, mcp_servers: nextOrchMcps },
+        subagents: nextSubagents,
+        visual_layout: { nodes: nextLayout },
+      });
+      setSelectedNodeId(importedIds[0]);
+      setStudioRightPanel("inspector");
+      setShowMcpJsonModal(false);
+      notify(
+        `Imported ${importedIds.length} MCP server(s): ${importedIds.join(", ")}` +
+          (mcpImportAssignAgents.length > 0 ? ` (assigned to ${mcpImportAssignAgents.join(", ")})` : "")
+      );
+    } catch (err: unknown) {
+      setMcpJsonError(err instanceof Error ? err.message : "Invalid MCP JSON format");
+    }
+  };
+
   return (
     <div className="min-h-screen h-screen flex flex-col bg-slate-950 text-slate-100 overflow-hidden">
       {/* Top Navigation Bar */}
@@ -1258,6 +1399,16 @@ export default function App() {
                 >
                   <Plus className="w-3.5 h-3.5" />
                   Add MCP Server Node
+                </button>
+                <button
+                  onClick={() => {
+                    setMcpJsonError(null);
+                    setShowMcpJsonModal(true);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-950/40 hover:bg-purple-900/50 border border-purple-700/40 text-purple-300 text-xs font-medium cursor-pointer"
+                >
+                  <Code2 className="w-3.5 h-3.5" />
+                  Import MCP JSON (mcpServers)
                 </button>
                 <button
                   onClick={handleDuplicateBlueprint}
@@ -2405,10 +2556,31 @@ export default function App() {
                               className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 font-mono"
                             />
                           </div>
-                          <div className="col-span-2">
-                            <label className="block text-slate-400 mb-1">Args (space-separated)</label>
-                            <input
-                              value={(selectedMcpServer.args || []).join(" ")}
+                          <div className="col-span-3">
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-slate-400">
+                                Arguments <span className="text-[10px] text-slate-500">(one per line — spaces in paths preserved)</span>
+                              </label>
+                              <button
+                                onClick={() =>
+                                  handleCanvasBlueprintChange({
+                                    ...selectedBlueprint,
+                                    mcp_servers: (selectedBlueprint.mcp_servers || []).map((m) =>
+                                      m.id === selectedMcpServer.id
+                                        ? { ...m, args: [...(m.args || []), "${WORKSPACE}"] }
+                                        : m
+                                    ),
+                                  })
+                                }
+                                className="px-1.5 py-0.5 rounded bg-purple-950/80 hover:bg-purple-900 border border-purple-700/60 text-purple-200 text-[10px] font-mono cursor-pointer"
+                                title="Append dynamic ${WORKSPACE} directory path argument"
+                              >
+                                + {"${WORKSPACE}"}
+                              </button>
+                            </div>
+                            <textarea
+                              rows={4}
+                              value={(selectedMcpServer.args || []).join("\n")}
                               onChange={(e) =>
                                 handleCanvasBlueprintChange({
                                   ...selectedBlueprint,
@@ -2416,15 +2588,29 @@ export default function App() {
                                     m.id === selectedMcpServer.id
                                       ? {
                                           ...m,
-                                          args: e.target.value.split(/\s+/).filter(Boolean),
+                                          args: e.target.value
+                                            .split("\n")
+                                            .map((line) => line.trim())
+                                            .filter((line) => line.length > 0),
                                         }
                                       : m
                                   ),
                                 })
                               }
-                              placeholder="-y @modelcontextprotocol/server-github"
-                              className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 font-mono"
+                              placeholder={"-y\n@cartographai/mcp-server-codegraph\n${WORKSPACE}"}
+                              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 font-mono text-[11px] leading-relaxed"
                             />
+                            <div className="mt-1.5 p-2 rounded-lg bg-indigo-950/35 border border-indigo-800/50 text-[10px] text-slate-300 space-y-1 leading-relaxed">
+                              <div className="font-semibold text-indigo-300">
+                                How to configure directory path arguments (e.g. <code>/path/to/directory</code>):
+                              </div>
+                              <div>
+                                • Use <code className="text-cyan-300">{"${WORKSPACE}"}</code> (or <code className="text-cyan-300">{"${workspaceFolder}"}</code>) to automatically resolve to the target project folder or sandbox on deploy/run.
+                              </div>
+                              <div>
+                                • Or enter a fixed absolute path using forward slashes (e.g. <code className="text-emerald-300">D:/Projects/My App</code>) — spaces are preserved because each line is one argument.
+                              </div>
+                            </div>
                           </div>
                         </div>
                       ) : (
@@ -2504,6 +2690,69 @@ export default function App() {
                             <span className="text-slate-400">({sa.name})</span>
                           </label>
                         ))}
+                      </div>
+
+                      {/* Live JSON Preview & Paste JSON Shortcut */}
+                      <div className="p-2.5 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                            Standard mcpServers JSON Preview
+                          </span>
+                          <button
+                            onClick={() => {
+                              const entry: Record<string, unknown> =
+                                selectedMcpServer.transport === "stdio"
+                                  ? {
+                                      command: selectedMcpServer.command || "npx",
+                                      args: selectedMcpServer.args || [],
+                                      ...(Object.keys(selectedMcpServer.env || {}).length > 0
+                                        ? { env: selectedMcpServer.env }
+                                        : {}),
+                                    }
+                                  : {
+                                      type: selectedMcpServer.transport,
+                                      url: selectedMcpServer.url || "",
+                                      ...(Object.keys(selectedMcpServer.env || {}).length > 0
+                                        ? { env: selectedMcpServer.env }
+                                        : {}),
+                                    };
+                              setMcpJsonInput(
+                                JSON.stringify({ mcpServers: { [selectedMcpServer.id]: entry } }, null, 2)
+                              );
+                              setMcpJsonError(null);
+                              setShowMcpJsonModal(true);
+                            }}
+                            className="text-[10px] text-purple-300 hover:text-purple-200 underline cursor-pointer"
+                          >
+                            Edit / Paste JSON
+                          </button>
+                        </div>
+                        <pre className="p-2 rounded bg-slate-900/80 border border-slate-800/80 font-mono text-[10px] text-emerald-300 overflow-x-auto whitespace-pre">
+                          {JSON.stringify(
+                            {
+                              mcpServers: {
+                                [selectedMcpServer.id]:
+                                  selectedMcpServer.transport === "stdio"
+                                    ? {
+                                        command: selectedMcpServer.command || "npx",
+                                        args: selectedMcpServer.args || [],
+                                        ...(Object.keys(selectedMcpServer.env || {}).length > 0
+                                          ? { env: selectedMcpServer.env }
+                                          : {}),
+                                      }
+                                    : {
+                                        type: selectedMcpServer.transport,
+                                        url: selectedMcpServer.url || "",
+                                        ...(Object.keys(selectedMcpServer.env || {}).length > 0
+                                          ? { env: selectedMcpServer.env }
+                                          : {}),
+                                      },
+                              },
+                            },
+                            null,
+                            2
+                          )}
+                        </pre>
                       </div>
                     </div>
                   )}
@@ -5517,6 +5766,117 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* MCP JSON Importer Modal */}
+      {showMcpJsonModal && selectedBlueprint && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-xl rounded-2xl bg-slate-900 border border-purple-700/60 shadow-2xl p-5 space-y-4 text-xs">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-bold text-white flex items-center gap-2">
+                  <Code2 className="w-4 h-4 text-purple-400" />
+                  Import MCP Server JSON Configuration
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Paste standard <code>{`{"mcpServers": { ... }}`}</code> JSON from any MCP README (trailing commas supported).
+                </div>
+              </div>
+              <button
+                onClick={() => setShowMcpJsonModal(false)}
+                className="text-slate-400 hover:text-white text-sm px-2 py-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <textarea
+              rows={11}
+              value={mcpJsonInput}
+              onChange={(e) => {
+                setMcpJsonInput(e.target.value);
+                setMcpJsonError(null);
+              }}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-[11px] text-emerald-300 leading-relaxed focus:outline-none focus:border-purple-500"
+              spellCheck={false}
+            />
+
+            <label className="flex items-start gap-2 cursor-pointer p-2.5 rounded-lg bg-slate-950 border border-slate-800">
+              <input
+                type="checkbox"
+                checked={mcpAutoReplacePathPlaceholder}
+                onChange={(e) => setMcpAutoReplacePathPlaceholder(e.target.checked)}
+                className="mt-0.5 accent-purple-500"
+              />
+              <div className="text-[11px] text-slate-300 leading-snug">
+                <span className="font-semibold text-white">
+                  Auto-replace <code className="text-amber-300">/path/to/directory</code> with{" "}
+                  <code className="text-cyan-300">{"${WORKSPACE}"}</code>
+                </span>
+                <div className="text-[10px] text-slate-400 mt-0.5">
+                  When deployed to a project folder or run in a sandbox, <code className="text-cyan-300">{"${WORKSPACE}"}</code> automatically resolves to that directory path (using forward slashes for cross-platform Node/npx compatibility).
+                </div>
+              </div>
+            </label>
+
+            <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 space-y-1.5">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-purple-300">
+                Assign Imported MCP Server(s) To (Optional)
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {[
+                  { id: selectedBlueprint.orchestrator.id, label: `${selectedBlueprint.orchestrator.id} (Orchestrator)` },
+                  ...selectedBlueprint.subagents.map((sa) => ({ id: sa.id, label: sa.id })),
+                ].map((ag) => {
+                  const checked = mcpImportAssignAgents.includes(ag.id);
+                  return (
+                    <label
+                      key={ag.id}
+                      className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border cursor-pointer text-[11px] font-mono ${
+                        checked
+                          ? "bg-purple-950/70 border-purple-500 text-purple-200"
+                          : "bg-slate-900 border-slate-800 text-slate-300 hover:border-slate-700"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setMcpImportAssignAgents((prev) =>
+                            prev.includes(ag.id) ? prev.filter((x) => x !== ag.id) : [...prev, ag.id]
+                          )
+                        }
+                        className="accent-purple-500"
+                      />
+                      {ag.label}
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+
+            {mcpJsonError && (
+              <div className="p-2.5 rounded-lg bg-rose-950/70 border border-rose-700/70 text-rose-200 text-[11px]">
+                {mcpJsonError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-1">
+              <button
+                onClick={() => setShowMcpJsonModal(false)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleImportMcpJson}
+                className="px-4 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-semibold cursor-pointer"
+              >
+                Import &amp; Upsert MCP Server(s)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

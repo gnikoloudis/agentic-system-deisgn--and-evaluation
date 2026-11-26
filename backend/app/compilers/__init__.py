@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import shutil
-from typing import Dict
+from typing import Dict, Optional
 
 from app.compilers.antigravity import AntigravityAdapter
 from app.compilers.base import HarnessAdapter
@@ -31,9 +31,15 @@ def compile_architecture(
     harness: HarnessType,
     run_id: str = "preview-run",
     server_url: str = "http://127.0.0.1:8765",
+    workspace_dir: Optional[str] = None,
 ) -> CompilationResult:
     adapter = get_adapter(harness)
-    return adapter.compile(blueprint, run_id=run_id, server_url=server_url)
+    return adapter.compile(
+        blueprint,
+        run_id=run_id,
+        server_url=server_url,
+        workspace_dir=workspace_dir,
+    )
 
 
 def deploy_compiled_files(compilation: CompilationResult, workspace_dir: Path) -> None:

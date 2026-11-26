@@ -1417,7 +1417,14 @@ async def start_execution_run(
             raise RuntimeError("Git binary not found on PATH; cannot create isolated sandbox")
 
         server_url = f"http://{settings.host}:{settings.port}"
-        compilation = compile_architecture(blueprint, harness, run_id=run_id, server_url=server_url)
+        planned_sandbox_dir = str((WORKSPACES_DIR / run_id).resolve())
+        compilation = compile_architecture(
+            blueprint,
+            harness,
+            run_id=run_id,
+            server_url=server_url,
+            workspace_dir=planned_sandbox_dir,
+        )
 
         sandbox_dir = create_isolated_sandbox(
             run_id=run_id,
