@@ -16,9 +16,10 @@
 7. [Tab 5 — A/B Matrix (Compare Two Designs Side-by-Side)](#7-tab-5--ab-matrix-compare-two-designs-side-by-side)
 8. [Tab 6 — AI Advisor (One-Click Team Improvements)](#8-tab-6--ai-advisor-one-click-team-improvements)
 9. [10-Minute Worked Example: Technical Business Analyst Team](#9-10-minute-worked-example-technical-business-analyst-team)
-10. [Working with IT (Optional Enterprise Setup)](#10-working-with-it-optional-enterprise-setup)
-11. [Common Mistakes & Quick Fixes (FAQ)](#11-common-mistakes--quick-fixes-faq)
-12. [A–Z Jargon-to-English Glossary](#12-az-jargon-to-english-glossary)
+10. [Copy-Paste Prompt Playbook by Harness (Claude Code, Antigravity & OpenCode)](#10-copy-paste-prompt-playbook-by-harness-claude-code-antigravity--opencode)
+11. [Working with IT (Optional Enterprise Setup)](#11-working-with-it-optional-enterprise-setup)
+12. [Common Mistakes & Quick Fixes (FAQ)](#12-common-mistakes--quick-fixes-faq)
+13. [A–Z Jargon-to-English Glossary](#13-az-jargon-to-english-glossary)
 
 ---
 
@@ -250,7 +251,187 @@ Follow this quick walkthrough to experience the full loop from start to finish:
 
 ---
 
-## 10. Working with IT (Optional Enterprise Setup)
+## 10. Copy-Paste Prompt Playbook by Harness (Claude Code, Antigravity & OpenCode)
+
+Once your AI team is deployed into a project folder (via **Tab 1 → `Compiled Files` → `1. Deploy & Link Docs`**), you interact with it inside your chosen AI application (**Claude Code**, **Antigravity**, or **OpenCode**).
+
+Because each harness uses slightly different shorthand for **Workflows**, **Skills**, **MCP Tools**, and **Custom Commands**, use the quick-reference table and copy-paste playbooks below.
+
+### 10.1 Quick-Reference Comparison Across All 3 Harnesses
+
+| What You Want to Do | Claude Code (`claude`) | Antigravity (`agy` / IDE) | OpenCode (`opencode`) |
+| :--- | :--- | :--- | :--- |
+| **Verify setup & docs** | `/verify-setup` | *"Run the `verify-setup` skill."* | `/verify-setup` |
+| **Run full multi-agent workflow** | Ask the Lead Orchestrator in plain English (follows `CLAUDE.md`) | *"Follow `GEMINI.md` and run the full multi-agent workflow..."* | Ask primary orchestrator (follows `AGENTS.md`) or run `/generate-tba-pack` |
+| **Call one specific specialist** | *"Delegate to the `<subagent_id>` subagent to..."* | *"Invoke the `<subagent_id>` subagent to..."* | `@<subagent_id> ...` (or press `Tab` to switch agents) |
+| **Apply a Skill / Playbook** | `/<skill-slug>` or *"Use the `<skill-slug>` skill..."* | *"Use the `<skill-slug>` skill to..."* | `/<skill-slug>` or *"Apply `/<skill-slug>`..."* |
+| **Use an MCP Server tool** | *"Use the `<mcp_server>` MCP server to..."* | *"Using the `<mcp_server>` MCP server, ..."* | *"`@<subagent_id>` use `<mcp_server>` MCP to..."* |
+| **Run a Custom Command** | `/<command-id>` | *"Run the `<command-id>` skill."* | `/<command-id>` |
+| **Prepare for Studio scoring** | `/evaluate-project` | *"Run the `evaluate-project` skill."* | `/evaluate-project` |
+
+---
+
+### 10.2 Generic Reusable Prompt Templates (Any Blueprint)
+
+Swap `<subagent_id>`, `<skill-slug>`, `<mcp_server>`, and `<command-id>` with the exact names shown on your Studio canvas:
+
+- **Run the entire team end-to-end:**
+  > *"Follow the deployed architecture rules and execute the full multi-agent workflow in strict step order for `<your goal>`. Respect all role permissions and guardrail hooks, and do not skip QA verification."*
+- **Delegate to a single specialist:**
+  > *"Delegate to `<subagent_id>` to `<specific task>` and return a concise summary of findings/changes."*
+- **Combine a specialist + a Skill:**
+  > *"Have `<subagent_id>` complete `<specific task>` using the `/<skill-slug>` skill checklist and verify every required section is included."*
+- **Combine a specialist + an MCP Server:**
+  > *"Have `<subagent_id>` use the `<mcp_server>` MCP server to `<query or action>`, then summarize the results for the next step in the workflow."*
+- **Trigger a QA review & retry loop:**
+  > *"Invoke `<qa_subagent_id>` to audit the deliverables against our acceptance criteria. If `VERDICT: FAIL`, send the exact defect list back to `<author_subagent_id>` and re-verify until `VERDICT: PASS`."*
+
+---
+
+### 10.3 Claude Code (`claude`) Prompt Playbook
+
+Open a terminal inside your deployed project folder and launch `claude`.
+
+#### Business Analysis (TBA) Team Prompts
+- **Check setup:**
+  ```text
+  /verify-setup
+  ```
+- **Run full TBA workflow (Requirements → Workflows → User Stories → QA Gate):**
+  ```text
+  Follow CLAUDE.md and run the full Technical Business Analyst workflow on the linked documentation folder. Delegate in strict order: requirements_elicitor -> workflow_architect -> user_story_author -> ba_qa_gatekeeper until VERDICT: PASS.
+  ```
+- **Use a specific Skill:**
+  ```text
+  /wikipedia-user-story Review EPICS_AND_USER_STORIES.md and make sure every story includes Connextra format, Ron Jeffries' 3 Cs, Bill Wake's INVEST checklist, and Given/When/Then QA test cases.
+  ```
+- **Use an MCP Server (e.g., Jira / Confluence / GitHub):**
+  ```text
+  Use the github MCP server to list open feature issues and have requirements_elicitor map them into BR-xxx requirements.
+  ```
+- **Finish & prepare for HarnessForge Scorecard:**
+  ```text
+  /evaluate-project
+  ```
+
+#### Developer / SDLC Team Prompts
+- **Run full SDLC workflow (Planner → Coder → Verifier retry loop):**
+  ```text
+  Follow CLAUDE.md and implement <feature or bug fix> using the strict pipeline: first invoke the planner subagent (read-only) to produce a file-by-file plan, then pass that plan to the coder subagent to implement and add tests, then invoke the verifier subagent to run pytest and audit git diff until VERDICT: PASS.
+  ```
+- **Use a Skill with a specialist:**
+  ```text
+  Have the coder subagent apply /tdd-guide and /python-pro to implement the new endpoint test-first, then have verifier run /diff-audit.
+  ```
+- **Use an MCP Server (e.g., `codegraph`):**
+  ```text
+  Have the planner subagent use the codegraph MCP server to map the call graph and dependencies for the authentication module before writing the implementation plan.
+  ```
+- **Run a Custom Command:**
+  ```text
+  /<your-custom-command>
+  ```
+
+---
+
+### 10.4 Antigravity (`agy` CLI / Antigravity IDE) Prompt Playbook
+
+Open your deployed project folder in **Antigravity IDE** (or run `agy` in that folder). Antigravity automatically reads `GEMINI.md` and `.agents/skills/`.
+
+#### Business Analysis (TBA) Team Prompts
+- **Check setup:**
+  ```text
+  Run the verify-setup skill to confirm all agents and external reference documents are ready.
+  ```
+- **Run full TBA workflow:**
+  ```text
+  Run the generate-tba-pack skill following GEMINI.md. Register and invoke requirements_elicitor, workflow_architect, user_story_author, and ba_qa_gatekeeper in strict order until VERDICT: PASS.
+  ```
+- **Use a specific Skill:**
+  ```text
+  Invoke user_story_author and apply the delivery-rtm-pack and wikipedia-user-story skills to verify 100% BR-to-TC traceability in EPICS_AND_USER_STORIES.md.
+  ```
+- **Use an MCP Server (e.g., `stitch` or `codegraph`):**
+  ```text
+  Using the stitch MCP server, inspect the current UI screens and have workflow_architect document the user interaction sequence in WORKFLOWS_AND_DELIVERY_DOCS.md.
+  ```
+- **Finish & prepare for HarnessForge Scorecard:**
+  ```text
+  Run the evaluate-project skill.
+  ```
+
+#### Developer / SDLC Team Prompts
+- **Run full SDLC workflow:**
+  ```text
+  Follow GEMINI.md to implement <feature or bug fix>. Define and invoke the planner subagent first, then pass the plan to the coder subagent, and finally invoke the verifier subagent to verify tests and git diff until VERDICT: PASS.
+  ```
+- **Use Skills with specialists:**
+  ```text
+  Invoke the planner subagent using the api-design-principles and fastapi-expert skills to design the new API contract, then invoke coder using the python-pro and tdd-guide skills to implement it.
+  ```
+- **Use an MCP Server (e.g., `codegraph`):**
+  ```text
+  Invoke the planner subagent and use the codegraph MCP server to analyze symbol references and module boundaries before proposing edits.
+  ```
+- **Run a Custom Command (compiled as a skill in `.agents/skills/`):**
+  ```text
+  Run the <your-custom-command> skill.
+  ```
+
+---
+
+### 10.5 OpenCode (`opencode`) Prompt Playbook
+
+Open a terminal inside your deployed project folder and launch `opencode`. Press **`Tab`** anytime to switch between the primary orchestrator and individual agents, or mention them with **`@<agent_id>`**.
+
+#### Business Analysis (TBA) Team Prompts
+- **Check setup:**
+  ```text
+  /verify-setup
+  ```
+- **Run full TBA workflow (one-shot slash command):**
+  ```text
+  /generate-tba-pack
+  ```
+- **Call an individual specialist with `@` + apply a Skill:**
+  ```text
+  @user_story_author Apply /wikipedia-user-story to refine US-101 through US-106 with explicit boundary test cases for QA.
+  ```
+- **Use an MCP Server with an authorized specialist:**
+  ```text
+  @requirements_elicitor Use the postgres MCP server to inspect the existing database schema and list any data constraints that should be captured as BR-xxx rules.
+  ```
+- **Finish & prepare for HarnessForge Scorecard:**
+  ```text
+  /evaluate-project
+  ```
+
+#### Developer / SDLC Team Prompts
+- **Run full SDLC workflow from the primary orchestrator:**
+  ```text
+  Follow AGENTS.md to deliver <feature or bug fix>: delegate first to @planner for a read-only file-by-file plan, then to @coder for implementation and unit tests, then to @verifier to run pytest and audit git diff. Loop back to @coder up to 3 times if VERDICT: FAIL.
+  ```
+- **Call a specialist + Skills directly:**
+  ```text
+  @coder Apply /python-pro and /tdd-guide to implement the rate limiter with unit tests.
+  ```
+  ```text
+  @verifier Run /diff-audit to check git diff, confirm no debug artifacts remain, and report VERDICT: PASS or FAIL.
+  ```
+- **Use an MCP Server (e.g., `codegraph` or `github`):**
+  ```text
+  @planner Use the codegraph MCP server to trace callers of calculate_order_total and produce a safe refactoring plan.
+  ```
+- **Run a Custom Command:**
+  ```text
+  /<your-custom-command>
+  ```
+
+> **Pro Tip:** After finishing any session in Claude Code, Antigravity, or OpenCode, return to **HarnessForge Studio → Tab 1 → `Compiled Files` → `2. Evaluate Project`** to automatically grade the outputs and compare harnesses in **Tab 5 (`A/B Matrix`)**.
+
+---
+
+## 11. Working with IT (Optional Enterprise Setup)
 
 You can design, simulate, and grade architectures completely on your own. When you are ready to connect HarnessForge to company infrastructure or run on a live project folder, share these 3 touchpoints with your IT or Engineering partner:
 
@@ -267,7 +448,7 @@ You can design, simulate, and grade architectures completely on your own. When y
 
 ---
 
-## 11. Common Mistakes & Quick Fixes (FAQ)
+## 12. Common Mistakes & Quick Fixes (FAQ)
 
 | Problem | Why It Happens | Quick Fix |
 | :--- | :--- | :--- |
@@ -280,7 +461,7 @@ You can design, simulate, and grade architectures completely on your own. When y
 
 ---
 
-## 12. A–Z Jargon-to-English Glossary
+## 13. A–Z Jargon-to-English Glossary
 
 | Term | Plain-English Definition |
 | :--- | :--- |
