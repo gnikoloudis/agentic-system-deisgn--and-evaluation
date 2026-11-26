@@ -15,7 +15,7 @@ from app.db.database import (
     utc_now_iso,
 )
 from app.db.storage import blueprint_to_yaml, get_blueprint, get_task
-from app.evaluator.deterministic import run_deterministic_verifiers
+from app.evaluator.deterministic import run_deterministic_verifiers, synthesize_project_verifiers
 from app.evaluator.judge import evaluate_with_judge
 from app.evaluator.trajectory import analyze_trajectory_and_topology
 from app.runner.sandbox import extract_sandbox_git_diff
@@ -35,6 +35,7 @@ from app.schemas.evaluation import (
     EvaluationReport,
     RunRecordSchema,
 )
+from app.schemas.task import TaskSpec
 
 
 def evaluate_completed_run(run_id: str) -> EvaluationReport:
@@ -48,12 +49,29 @@ def evaluate_completed_run(run_id: str) -> EvaluationReport:
         raise ValueError(f"Blueprint '{run.architecture_id}' not found")
     blueprint, _, _ = bp_tuple
 
-    task_tuple = get_task(run.task_id)
-    if not task_tuple:
-        raise ValueError(f"Task '{run.task_id}' not found")
-    task, _, _ = task_tuple
-
     sandbox_dir = Path(run.sandbox_path)
+    task_tuple = get_task(run.task_id)
+    if task_tuple:
+        task, _, _ = task_tuple
+    elif run.task_id == "auto-detected-project-eval" or sandbox_dir.exists():
+        synthesized_verifiers = synthesize_project_verifiers(sandbox_dir)
+        task = TaskSpec(
+            id="auto-detected-project-eval",
+            name=f"Auto-Detected Project Evaluation ({sandbox_dir.name})",
+            category="custom",
+            difficulty="medium",
+            description=(
+                f"Automatically synthesized project verifiers for '{sandbox_dir.name}' "
+                f"({len(synthesized_verifiers)} check(s) detected from project structure)."
+            ),
+            prompt=f"Evaluate deliverables and tests in {sandbox_dir.name}.",
+            workspace_source=str(sandbox_dir),
+            expected_subagents=[sa.id for sa in blueprint.subagents],
+            verifiers=synthesized_verifiers,
+            tags=["auto-detected", "deployed-project"],
+        )
+    else:
+        raise ValueError(f"Task '{run.task_id}' not found")
     git_diff, changed_files = extract_sandbox_git_diff(sandbox_dir)
     if not git_diff and run.git_diff:
         git_diff = run.git_diff

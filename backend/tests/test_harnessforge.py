@@ -886,6 +886,56 @@ def test_mcp_workspace_path_resolution_and_clean_json_output(tmp_path: Path):
     }
 
 
+def test_auto_project_verifiers_and_local_venv_detection(client: TestClient, tmp_path: Path):
+    """Verify evaluating ANY deployed project auto-synthesizes project verifiers instead of misfiring bugfix-auth-token,
+    and detects local project .venv when present."""
+    from app.evaluator.deterministic import find_project_python, synthesize_project_verifiers
+
+    # 1. Create a mini Python app + tests without token_validator.py
+    (tmp_path / "app").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'mini-app'\nversion = '0.1.0'\n", encoding="utf-8")
+    (tmp_path / "app" / "calc.py").write_text("def add(a: int, b: int) -> int:\n    return a + b\n", encoding="utf-8")
+    (tmp_path / "tests" / "test_calc.py").write_text(
+        "from app.calc import add\n\ndef test_add():\n    assert add(2, 3) == 5\n",
+        encoding="utf-8",
+    )
+
+    # Synthesized verifiers include pytest + python syntax check + pyproject.toml, NOT token_validator.py
+    verifiers = synthesize_project_verifiers(tmp_path)
+    v_ids = {v.id for v in verifiers}
+    assert "auto_pytest_suite" in v_ids
+    assert "auto_py_compile_app" in v_ids
+    assert not any("token_validator" in (v.command or "") or "token_validator" in (v.pattern or "") for v in verifiers)
+
+    # 2. Local .venv detection finds .venv/Scripts/python.exe (Windows) or .venv/bin/python (POSIX)
+    fake_venv_py = tmp_path / ".venv" / ("Scripts" if sys.platform == "win32" else "bin") / (
+        "python.exe" if sys.platform == "win32" else "python"
+    )
+    fake_venv_py.parent.mkdir(parents=True, exist_ok=True)
+    fake_venv_py.write_text("", encoding="utf-8")
+    assert find_project_python(tmp_path) == fake_venv_py.resolve()
+    fake_venv_py.unlink()  # Remove empty stub so real pytest runs via fallback python
+
+    # 3. POST /api/runs/evaluate-directory with default bugfix-auth-token auto-switches to auto-detected-project-eval
+    resp = client.post(
+        "/api/runs/evaluate-directory",
+        json={
+            "project_directory": str(tmp_path),
+            "task_id": "bugfix-auth-token",
+            "architecture_id": "solo-generalist",
+            "harness": "antigravity",
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["task_id"] == "auto-detected-project-eval"
+    ev = data["evaluation"]
+    assert ev is not None
+    assert ev["deterministic_score"] == 100.0
+    assert ev["all_required_verifiers_passed"] is True
+
+
 
 
 

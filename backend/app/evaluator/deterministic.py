@@ -2,15 +2,265 @@
 
 from __future__ import annotations
 
+import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from app.schemas.evaluation import VerifierCheckResult
 from app.schemas.task import VerificationCheck
+
+
+def find_project_python(project_dir: Path) -> Optional[Path]:
+    """Locate a project-local Python virtual environment interpreter if present."""
+    candidates = [
+        project_dir / ".venv" / "Scripts" / "python.exe",
+        project_dir / "venv" / "Scripts" / "python.exe",
+        project_dir / "backend" / ".venv" / "Scripts" / "python.exe",
+        project_dir / "backend" / "venv" / "Scripts" / "python.exe",
+        project_dir / ".venv" / "bin" / "python",
+        project_dir / "venv" / "bin" / "python",
+        project_dir / "backend" / ".venv" / "bin" / "python",
+        project_dir / "backend" / "venv" / "bin" / "python",
+    ]
+    for cand in candidates:
+        if cand.exists() and cand.is_file():
+            return cand.resolve()
+    return None
+
+
+def build_project_env(python_exe: Optional[Path]) -> Dict[str, str]:
+    """Build subprocess environment with project virtualenv Scripts/bin prepended to PATH."""
+    env = os.environ.copy()
+    if not python_exe:
+        return env
+    scripts_dir = str(python_exe.parent)
+    env["PATH"] = scripts_dir + os.pathsep + env.get("PATH", "")
+    if python_exe.parent.name.lower() in ("scripts", "bin"):
+        env["VIRTUAL_ENV"] = str(python_exe.parent.parent)
+    return env
+
+
+def bootstrap_project_python_env(project_dir: Path) -> Tuple[Optional[Path], str]:
+    """Automatically create and/or install dependencies into a project's local .venv when pyproject.toml or requirements.txt exists."""
+    py_root: Optional[Path] = None
+    for cand_root in (project_dir, project_dir / "backend"):
+        if (cand_root / "pyproject.toml").exists() or (cand_root / "requirements.txt").exists():
+            py_root = cand_root
+            break
+    if not py_root:
+        return find_project_python(project_dir), "No pyproject.toml or requirements.txt found for auto-setup."
+
+    venv_dir = py_root / ".venv"
+    venv_py = (
+        venv_dir / "Scripts" / "python.exe"
+        if sys.platform == "win32"
+        else venv_dir / "bin" / "python"
+    )
+    notes: List[str] = []
+
+    try:
+        if not venv_py.exists():
+            uv_bin = shutil.which("uv")
+            if uv_bin:
+                subprocess.run([uv_bin, "venv", str(venv_dir)], cwd=str(py_root), capture_output=True, text=True, timeout=60)
+            else:
+                subprocess.run([sys.executable, "-m", "venv", str(venv_dir)], cwd=str(py_root), capture_output=True, text=True, timeout=90)
+            if venv_py.exists():
+                notes.append(f"Created virtual environment at {venv_dir.name}")
+
+        if not venv_py.exists():
+            return None, "Failed to create project .venv."
+
+        uv_bin = shutil.which("uv")
+        env = build_project_env(venv_py)
+
+        if (py_root / "pyproject.toml").exists():
+            if uv_bin:
+                res = subprocess.run(
+                    [uv_bin, "pip", "install", "--python", str(venv_py), "-e", ".[dev]"],
+                    cwd=str(py_root),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+                if res.returncode != 0:
+                    subprocess.run(
+                        [uv_bin, "pip", "install", "--python", str(venv_py), "-e", ".", "pytest"],
+                        cwd=str(py_root),
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                    )
+            else:
+                res = subprocess.run(
+                    [str(venv_py), "-m", "pip", "install", "-q", "-e", ".[dev]"],
+                    cwd=str(py_root),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+                if res.returncode != 0:
+                    subprocess.run(
+                        [str(venv_py), "-m", "pip", "install", "-q", "-e", ".", "pytest"],
+                        cwd=str(py_root),
+                        env=env,
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                    )
+            notes.append("Installed dependencies from pyproject.toml")
+        elif (py_root / "requirements.txt").exists():
+            if uv_bin:
+                subprocess.run(
+                    [uv_bin, "pip", "install", "--python", str(venv_py), "-r", "requirements.txt", "pytest"],
+                    cwd=str(py_root),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            else:
+                subprocess.run(
+                    [str(venv_py), "-m", "pip", "install", "-q", "-r", "requirements.txt", "pytest"],
+                    cwd=str(py_root),
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                )
+            notes.append("Installed dependencies from requirements.txt")
+
+        return venv_py.resolve(), "; ".join(notes) or "Synced project .venv"
+    except Exception as exc:
+        return find_project_python(project_dir), f"Auto-setup warning: {exc}"
+
+
+def synthesize_project_verifiers(project_dir: Path) -> List[VerificationCheck]:
+    """Automatically synthesize relevant deterministic verifiers for any deployed project folder."""
+    verifiers: List[VerificationCheck] = []
+
+    # 1. Python test suite (root tests/, backend/tests/, or test_*.py files)
+    has_root_tests = (project_dir / "tests").is_dir() or any(project_dir.glob("test_*.py"))
+    has_backend_tests = (project_dir / "backend" / "tests").is_dir()
+    if has_root_tests:
+        verifiers.append(
+            VerificationCheck(
+                id="auto_pytest_suite",
+                name="Project Pytest Suite (auto-detected)",
+                type="pytest_pass",
+                command="pytest -v",
+                weight=3.0,
+                required=True,
+                timeout_seconds=120,
+            )
+        )
+    elif has_backend_tests:
+        verifiers.append(
+            VerificationCheck(
+                id="auto_backend_pytest_suite",
+                name="Backend Pytest Suite (auto-detected)",
+                type="pytest_pass",
+                command="pytest -v backend/tests",
+                weight=3.0,
+                required=True,
+                timeout_seconds=120,
+            )
+        )
+
+    # 2. Python source compilation / syntax check
+    for src_dir_name in ("app", "src", "backend/app"):
+        if (project_dir / src_dir_name).is_dir() and any((project_dir / src_dir_name).rglob("*.py")):
+            verifiers.append(
+                VerificationCheck(
+                    id=f"auto_py_compile_{src_dir_name.replace('/', '_')}",
+                    name=f"Python Syntax Check ({src_dir_name}/)",
+                    type="command_exit_code",
+                    command=f"python -m compileall -q {src_dir_name}",
+                    weight=1.5,
+                    required=True,
+                    timeout_seconds=60,
+                )
+            )
+            break
+
+    # 3. Node.js / Frontend build check (when package.json + node_modules exist)
+    for pkg_rel in ("package.json", "frontend/package.json"):
+        pkg_path = project_dir / pkg_rel
+        if pkg_path.exists():
+            try:
+                pkg_data = json.loads(pkg_path.read_text(encoding="utf-8", errors="replace"))
+                scripts = pkg_data.get("scripts") or {}
+                pkg_dir = pkg_path.parent
+                if "build" in scripts and (pkg_dir / "node_modules").is_dir():
+                    cmd = "npm run build" if pkg_rel == "package.json" else "npm --prefix frontend run build"
+                    verifiers.append(
+                        VerificationCheck(
+                            id="auto_npm_build",
+                            name=f"Frontend Build ({pkg_rel})",
+                            type="command_exit_code",
+                            command=cmd,
+                            weight=2.0,
+                            required=True,
+                            timeout_seconds=120,
+                        )
+                    )
+                    break
+            except Exception:
+                pass
+
+    # 4. TBA / Documentation deliverables if present
+    if (project_dir / "WORKFLOWS_AND_DELIVERY_DOCS.md").exists():
+        verifiers.append(
+            VerificationCheck(
+                id="auto_workflows_mermaid",
+                name="Mermaid Workflow Diagrams Valid",
+                type="mermaid_diagram_check",
+                target_path="WORKFLOWS_AND_DELIVERY_DOCS.md",
+                pattern="flowchart,sequenceDiagram,stateDiagram",
+                weight=2.0,
+                required=False,
+                timeout_seconds=20,
+            )
+        )
+    if (project_dir / "EPICS_AND_USER_STORIES.md").exists():
+        verifiers.append(
+            VerificationCheck(
+                id="auto_user_stories_invest",
+                name="User Stories 3Cs & INVEST Compliance",
+                type="user_story_invest_check",
+                target_path="EPICS_AND_USER_STORIES.md",
+                weight=2.0,
+                required=False,
+                timeout_seconds=20,
+            )
+        )
+
+    # 5. Fallback project config / README presence check
+    for cfg_file in ("pyproject.toml", "requirements.txt", "package.json", "README.md"):
+        if (project_dir / cfg_file).exists():
+            verifiers.append(
+                VerificationCheck(
+                    id=f"auto_exists_{cfg_file.replace('.', '_')}",
+                    name=f"Project File Present ({cfg_file})",
+                    type="file_exists",
+                    target_path=cfg_file,
+                    weight=1.0,
+                    required=False,
+                    timeout_seconds=10,
+                )
+            )
+            break
+
+    return verifiers
 
 
 def run_deterministic_verifiers(
@@ -26,6 +276,48 @@ def run_deterministic_verifiers(
     total_weight = 0.0
     earned_weight = 0.0
     all_required_passed = True
+    bootstrapped_venv = False
+
+    def _run_cmd_in_project(cmd_str: str, timeout_s: int, project_py: Optional[Path]) -> subprocess.CompletedProcess:
+        py_exec = str(project_py) if project_py else sys.executable
+        env = build_project_env(project_py)
+        stripped = cmd_str.strip()
+        if stripped.startswith("pytest"):
+            args = [py_exec, "-m", *stripped.split()]
+            return subprocess.run(
+                args,
+                cwd=str(sandbox_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                encoding="utf-8",
+                errors="replace",
+            )
+        if stripped.startswith("python ") or stripped.startswith("python3 "):
+            parts = stripped.split()
+            args = [py_exec, *parts[1:]]
+            return subprocess.run(
+                args,
+                cwd=str(sandbox_dir),
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+                encoding="utf-8",
+                errors="replace",
+            )
+        return subprocess.run(
+            cmd_str,
+            cwd=str(sandbox_dir),
+            env=env,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            encoding="utf-8",
+            errors="replace",
+        )
 
     for check in verifiers:
         t0 = time.perf_counter()
@@ -36,32 +328,28 @@ def run_deterministic_verifiers(
         try:
             if check.type in ("command_exit_code", "pytest_pass"):
                 cmd_str = check.command or ("pytest -v" if check.type == "pytest_pass" else "echo ok")
-                # Use current python interpreter for pytest to guarantee environment consistency on Windows
-                if cmd_str.strip().startswith("pytest"):
-                    args = [sys.executable, "-m", *cmd_str.strip().split()]
-                    proc = subprocess.run(
-                        args,
-                        cwd=str(sandbox_dir),
-                        capture_output=True,
-                        text=True,
-                        timeout=check.timeout_seconds,
-                        encoding="utf-8",
-                        errors="replace",
-                    )
-                else:
-                    proc = subprocess.run(
-                        cmd_str,
-                        cwd=str(sandbox_dir),
-                        shell=True,
-                        capture_output=True,
-                        text=True,
-                        timeout=check.timeout_seconds,
-                        encoding="utf-8",
-                        errors="replace",
-                    )
+                proj_py = find_project_python(sandbox_dir)
+                proc = _run_cmd_in_project(cmd_str, check.timeout_seconds, proj_py)
+                combined_out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+
+                # Auto-bootstrap project .venv once if a Python/pytest check fails due to missing modules
+                is_py_cmd = cmd_str.strip().startswith(("pytest", "python ", "python3 "))
+                missing_module = (
+                    "ModuleNotFoundError" in combined_out
+                    or "No module named" in combined_out
+                    or "ImportError" in combined_out
+                )
+                if proc.returncode != 0 and is_py_cmd and missing_module and not bootstrapped_venv:
+                    bootstrapped_venv = True
+                    new_py, setup_note = bootstrap_project_python_env(sandbox_dir)
+                    if new_py:
+                        proc = _run_cmd_in_project(cmd_str, check.timeout_seconds, new_py)
+                        retry_out = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+                        combined_out = f"[Auto-Setup: {setup_note}]\n{retry_out}".strip()
+
                 exit_code = proc.returncode
                 passed = proc.returncode == 0
-                output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()[:1500]
+                output = combined_out[:1500]
 
             elif check.type == "file_exists":
                 target = sandbox_dir / (check.target_path or "")

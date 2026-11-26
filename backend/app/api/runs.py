@@ -234,7 +234,7 @@ async def api_evaluate_deployed_directory(req: EvaluateDirectoryRequest) -> RunR
     harness: HarnessType = req.harness or topo_cfg.get("harness") or "opencode"
 
     chosen_task_id = req.task_id
-    # Auto-detect the true domain task when evaluating a deployed folder that contains TBA or Consulting deliverables
+    # Auto-detect the true domain task when evaluating a deployed folder so mismatched sample tasks (e.g. bugfix-auth-token) never misfire
     has_tba_deliverables = (
         (target_path / "WORKFLOWS_AND_DELIVERY_DOCS.md").exists()
         or (target_path / "EPICS_AND_USER_STORIES.md").exists()
@@ -246,17 +246,23 @@ async def api_evaluate_deployed_directory(req: EvaluateDirectoryRequest) -> RunR
         (target_path / "EXECUTIVE_MEMO.md").exists()
         or "consulting" in arch_id
     )
-    if not chosen_task_id or (chosen_task_id == "bugfix-auth-token" and (has_tba_deliverables or has_consulting_deliverable)):
+    is_mismatched_auth_default = (
+        chosen_task_id == "bugfix-auth-token" and not (target_path / "token_validator.py").exists()
+    )
+    if not chosen_task_id or is_mismatched_auth_default:
         if has_tba_deliverables:
             chosen_task_id = "tba-focusflow-todo-app" if get_task("tba-focusflow-todo-app") else "tba-chargeback-dispute-system"
         elif has_consulting_deliverable:
             chosen_task_id = "consulting-saas-turnaround"
         else:
-            all_tasks = list_tasks()
-            chosen_task_id = all_tasks[0].id if all_tasks else "bugfix-auth-token"
+            chosen_task_id = "auto-detected-project-eval"
 
     task_tuple = get_task(chosen_task_id)
-    task_name = task_tuple[0].name if task_tuple else chosen_task_id
+    task_name = (
+        task_tuple[0].name
+        if task_tuple
+        else ("Auto-Detected Project Evaluation" if chosen_task_id == "auto-detected-project-eval" else chosen_task_id)
+    )
 
     run_id = topo_cfg.get("run_id")
     if not run_id or run_id in ("preview-run", "exported-workspace"):

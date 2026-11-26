@@ -166,17 +166,20 @@ def api_export_to_directory(architecture_id: str, req: ExportToDirectoryRequest)
 
     # Determine best matching benchmark task for evaluating this project folder
     chosen_task_id = req.task_id
-    if not chosen_task_id:
+    if not chosen_task_id or (chosen_task_id == "bugfix-auth-token" and not (target_path / "token_validator.py").exists()):
         if "test_application_docs" in str(target_path) or "technical-business-analyst" in architecture_id:
             chosen_task_id = "tba-focusflow-todo-app" if get_task("tba-focusflow-todo-app") else "tba-chargeback-dispute-system"
         elif "consulting" in architecture_id:
             chosen_task_id = "consulting-saas-turnaround"
         else:
-            all_tasks = list_tasks()
-            chosen_task_id = all_tasks[0].id if all_tasks else "bugfix-auth-token"
+            chosen_task_id = "auto-detected-project-eval"
 
     task_tuple = get_task(chosen_task_id)
-    task_name = task_tuple[0].name if task_tuple else chosen_task_id
+    task_name = (
+        task_tuple[0].name
+        if task_tuple
+        else ("Auto-Detected Project Evaluation" if chosen_task_id == "auto-detected-project-eval" else chosen_task_id)
+    )
 
     run_id = f"deploy-{uuid.uuid4().hex[:8]}"
     server_url = f"http://{settings.host}:{settings.port}"
