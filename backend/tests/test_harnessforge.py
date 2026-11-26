@@ -935,6 +935,32 @@ def test_auto_project_verifiers_and_local_venv_detection(client: TestClient, tmp
     assert ev["deterministic_score"] == 100.0
     assert ev["all_required_verifiers_passed"] is True
 
+    # 4. Most recently completed evaluation sorts first in list_runs() even if its original started_at was older
+    from app.db.database import list_runs, save_run
+    from app.schemas.evaluation import RunRecordSchema
+
+    older_started_recently_completed = RunRecordSchema(
+        id="deploy-recent-eval-order-test",
+        architecture_id="solo-generalist",
+        architecture_name="Solo Generalist",
+        architecture_version="1.0.0",
+        task_id="auto-detected-project-eval",
+        task_name="Recently Completed Eval",
+        harness="antigravity",
+        mode="interactive",
+        status="completed",
+        sandbox_path=str(tmp_path),
+        cli_command="agy",
+        started_at="2020-01-01T00:00:00+00:00",
+        completed_at="2099-12-31T23:59:59+00:00",
+    )
+    save_run(older_started_recently_completed)
+    try:
+        ordered = list_runs(limit=10)
+        assert ordered[0].id == "deploy-recent-eval-order-test"
+    finally:
+        client.delete("/api/runs/deploy-recent-eval-order-test")
+
 
 
 

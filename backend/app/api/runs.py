@@ -268,81 +268,99 @@ async def api_evaluate_deployed_directory(req: EvaluateDirectoryRequest) -> RunR
     if not run_id or run_id in ("preview-run", "exported-workspace"):
         run_id = f"deploy-{uuid.uuid4().hex[:8]}"
 
-    existing_run = get_run(run_id)
-    run_rec = RunRecordSchema(
-        id=run_id,
-        architecture_id=bp.metadata.id,
-        architecture_name=bp.metadata.name,
-        architecture_version=bp.metadata.version,
-        task_id=chosen_task_id,
-        task_name=f"[Deployed Project: {target_path.name}] {task_name}",
-        harness=harness,
-        mode="interactive",
-        status="evaluating",
-        sandbox_path=str(target_path),
-        cli_command= existing_run.cli_command if existing_run else harness,
-        started_at=existing_run.started_at if existing_run else utc_now_iso(),
-    )
-    save_run(run_rec, blueprint_snapshot=bp.model_dump(mode="json"))
+    from app.runner import executor as _exec_mod
 
-    # First ingest local .harness-eval/telemetry.jsonl (or .agents/.harness-eval/telemetry.jsonl)
-    from app.runner.transcript_parsers import ingest_local_telemetry_jsonl
-    current_events = list_telemetry_events(run_id)
-    local_events = ingest_local_telemetry_jsonl(run_id, target_path, existing_count=len(current_events))
-    for le in local_events:
-        append_telemetry_event(le)
-    current_events = list_telemetry_events(run_id)
-
-    # Backfill timestamp-delta durations and estimated tokens if legacy hook events had 0 duration/tokens
-    prev_dt = None
-    for ev in current_events:
-        if ev.event_type in ("PreToolUse", "SubagentStart") and ev.input_tokens == 0 and ev.output_tokens == 0:
-            ev.input_tokens = 420
-            ev.output_tokens = 190
-            ev.cost_usd = round((ev.input_tokens * 3.0 + ev.output_tokens * 15.0) / 1_000_000, 6)
-        try:
-            from datetime import datetime
-            curr_dt = datetime.fromisoformat(ev.timestamp.replace("Z", "+00:00"))
-            if prev_dt and ev.duration_ms == 0.0:
-                delta_ms = max(120.0, min(30000.0, (curr_dt - prev_dt).total_seconds() * 1000.0))
-                ev.duration_ms = round(delta_ms, 2)
-            prev_dt = curr_dt
-        except Exception:
-            if ev.duration_ms == 0.0:
-                ev.duration_ms = 220.0
-
-    # Determine visited subagents from state.json, telemetry events, or authored deliverables on disk
-    recorded_agents = {e.agent_id for e in current_events if e.event_type == "SubagentStart"}
-    visited_from_state = list(state_data.get("visited_nodes", []))
-
-    # If the TBA deliverables exist on disk with valid sections, infer the pipeline subagents that produced them
-    if (target_path / "WORKFLOWS_AND_DELIVERY_DOCS.md").exists() and (target_path / "EPICS_AND_USER_STORIES.md").exists():
-        for sa in bp.subagents:
-            if sa.id not in visited_from_state:
-                visited_from_state.append(sa.id)
-
-    for visited_node in visited_from_state:
-        if visited_node != bp.orchestrator.id and visited_node not in recorded_agents:
-            append_telemetry_event(
-                TelemetryEvent(
-                    run_id=run_id,
-                    timestamp=utc_now_iso(),
-                    source="hook",
-                    event_type="SubagentStart",
-                    agent_id=visited_node,
-                    status="ok",
-                    duration_ms=1450.0,
-                    input_tokens=1850,
-                    output_tokens=1120,
-                    cost_usd=0.02235,
-                    message=f"Executed subagent `{visited_node}` during deployed project session",
-                )
+    with _exec_mod._run_registry_lock:
+        live = get_active_run()
+        if live is not None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Another execution/evaluation run ('{live.id}', status: {live.status}) is already in progress. "
+                    f"Wait for it to finish or stop it first."
+                ),
             )
+        _exec_mod._starting_run_ids.add(run_id)
 
-    await asyncio.to_thread(evaluate_completed_run, run_id)
-    evaluated_run = get_run(run_id)
-    assert evaluated_run is not None
-    return evaluated_run
+    try:
+        existing_run = get_run(run_id)
+        run_rec = RunRecordSchema(
+            id=run_id,
+            architecture_id=bp.metadata.id,
+            architecture_name=bp.metadata.name,
+            architecture_version=bp.metadata.version,
+            task_id=chosen_task_id,
+            task_name=f"[Deployed Project: {target_path.name}] {task_name}",
+            harness=harness,
+            mode="interactive",
+            status="evaluating",
+            sandbox_path=str(target_path),
+            cli_command=existing_run.cli_command if existing_run else harness,
+            started_at=existing_run.started_at if existing_run else utc_now_iso(),
+        )
+        save_run(run_rec, blueprint_snapshot=bp.model_dump(mode="json"))
+
+        # First ingest local .harness-eval/telemetry.jsonl (or .agents/.harness-eval/telemetry.jsonl)
+        from app.runner.transcript_parsers import ingest_local_telemetry_jsonl
+        current_events = list_telemetry_events(run_id)
+        local_events = ingest_local_telemetry_jsonl(run_id, target_path, existing_count=len(current_events))
+        for le in local_events:
+            append_telemetry_event(le)
+        current_events = list_telemetry_events(run_id)
+
+        # Backfill timestamp-delta durations and estimated tokens if legacy hook events had 0 duration/tokens
+        prev_dt = None
+        for ev in current_events:
+            if ev.event_type in ("PreToolUse", "SubagentStart") and ev.input_tokens == 0 and ev.output_tokens == 0:
+                ev.input_tokens = 420
+                ev.output_tokens = 190
+                ev.cost_usd = round((ev.input_tokens * 3.0 + ev.output_tokens * 15.0) / 1_000_000, 6)
+            try:
+                from datetime import datetime
+                curr_dt = datetime.fromisoformat(ev.timestamp.replace("Z", "+00:00"))
+                if prev_dt and ev.duration_ms == 0.0:
+                    delta_ms = max(120.0, min(30000.0, (curr_dt - prev_dt).total_seconds() * 1000.0))
+                    ev.duration_ms = round(delta_ms, 2)
+                prev_dt = curr_dt
+            except Exception:
+                if ev.duration_ms == 0.0:
+                    ev.duration_ms = 220.0
+
+        # Determine visited subagents from state.json, telemetry events, or authored deliverables on disk
+        recorded_agents = {e.agent_id for e in current_events if e.event_type == "SubagentStart"}
+        visited_from_state = list(state_data.get("visited_nodes", []))
+
+        # If the TBA deliverables exist on disk with valid sections, infer the pipeline subagents that produced them
+        if (target_path / "WORKFLOWS_AND_DELIVERY_DOCS.md").exists() and (target_path / "EPICS_AND_USER_STORIES.md").exists():
+            for sa in bp.subagents:
+                if sa.id not in visited_from_state:
+                    visited_from_state.append(sa.id)
+
+        for visited_node in visited_from_state:
+            if visited_node != bp.orchestrator.id and visited_node not in recorded_agents:
+                append_telemetry_event(
+                    TelemetryEvent(
+                        run_id=run_id,
+                        timestamp=utc_now_iso(),
+                        source="hook",
+                        event_type="SubagentStart",
+                        agent_id=visited_node,
+                        status="ok",
+                        duration_ms=1450.0,
+                        input_tokens=1850,
+                        output_tokens=1120,
+                        cost_usd=0.02235,
+                        message=f"Executed subagent `{visited_node}` during deployed project session",
+                    )
+                )
+
+        await asyncio.to_thread(evaluate_completed_run, run_id)
+        evaluated_run = get_run(run_id)
+        assert evaluated_run is not None
+        return evaluated_run
+    finally:
+        with _exec_mod._run_registry_lock:
+            _exec_mod._starting_run_ids.discard(run_id)
 
 
 @router.post("/{run_id}/complete-interactive", response_model=RunRecordSchema)

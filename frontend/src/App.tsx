@@ -52,7 +52,17 @@ const HARNESS_LABELS: Record<HarnessType, { name: string; badge: string }> = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("studio");
+  const [activeTab, setActiveTab] = useState<ActiveTab>(() => {
+    try {
+      const saved = localStorage.getItem("hf_active_tab") as ActiveTab | null;
+      if (saved && ["studio", "tasks", "runner", "evaluation", "compare", "advisor"].includes(saved)) {
+        return saved;
+      }
+    } catch {
+      // ignore storage errors
+    }
+    return "studio";
+  });
   const [blueprints, setBlueprints] = useState<AgentArchitecture[]>([]);
   const [selectedBlueprint, setSelectedBlueprint] = useState<AgentArchitecture | null>(null);
   const [rawYaml, setRawYaml] = useState<string>("");
@@ -258,13 +268,29 @@ export default function App() {
       setHarnessModels(hModels);
 
       if (bps.length > 0) {
-        const defaultBp = bps.find((b) => b.metadata.id === "planner-coder-verifier") || bps[0];
+        let savedBpId: string | null = null;
+        try {
+          savedBpId = localStorage.getItem("hf_selected_blueprint_id");
+        } catch {
+          // ignore
+        }
+        const defaultBp =
+          (savedBpId && bps.find((b) => b.metadata.id === savedBpId)) ||
+          bps.find((b) => b.metadata.id === "planner-coder-verifier") ||
+          bps[0];
         const full = await api.getBlueprint(defaultBp.metadata.id);
         setSelectedBlueprint(full.blueprint);
         setRawYaml(full.raw_yaml);
       }
       if (tks.length > 0) {
-        const fullTask = await api.getTask(tks[0].id);
+        let savedTaskId: string | null = null;
+        try {
+          savedTaskId = localStorage.getItem("hf_selected_task_id");
+        } catch {
+          // ignore
+        }
+        const defaultTask = (savedTaskId && tks.find((t) => t.id === savedTaskId)) || tks[0];
+        const fullTask = await api.getTask(defaultTask.id);
         setSelectedTask(fullTask.task);
         setTaskYaml(fullTask.raw_yaml);
       }
@@ -272,13 +298,55 @@ export default function App() {
         setActiveRun(activeStatus.active_run);
         startRunPolling(activeStatus.active_run.id);
       } else if (rns.length > 0) {
-        setActiveRun(rns[0]);
+        let savedRunId: string | null = null;
+        try {
+          savedRunId = localStorage.getItem("hf_active_run_id");
+        } catch {
+          // ignore
+        }
+        const matchedRun = (savedRunId && rns.find((r) => r.id === savedRunId)) || rns[0];
+        setActiveRun(matchedRun);
         setCompareIds(rns.slice(0, 2).map((r) => r.id));
       }
     } catch (err: unknown) {
       notify(err instanceof Error ? err.message : "Failed to connect to backend", "err");
     }
   }, [startRunPolling]);
+
+  // Persist active tab, evaluation run, blueprint, and task across browser refreshes
+  useEffect(() => {
+    try {
+      localStorage.setItem("hf_active_tab", activeTab);
+    } catch {
+      // ignore
+    }
+  }, [activeTab]);
+
+  useEffect(() => {
+    try {
+      if (activeRun?.id) localStorage.setItem("hf_active_run_id", activeRun.id);
+    } catch {
+      // ignore
+    }
+  }, [activeRun?.id]);
+
+  useEffect(() => {
+    try {
+      if (selectedBlueprint?.metadata.id) {
+        localStorage.setItem("hf_selected_blueprint_id", selectedBlueprint.metadata.id);
+      }
+    } catch {
+      // ignore
+    }
+  }, [selectedBlueprint?.metadata.id]);
+
+  useEffect(() => {
+    try {
+      if (selectedTask?.id) localStorage.setItem("hf_selected_task_id", selectedTask.id);
+    } catch {
+      // ignore
+    }
+  }, [selectedTask?.id]);
 
   useEffect(() => {
     loadInitialData();

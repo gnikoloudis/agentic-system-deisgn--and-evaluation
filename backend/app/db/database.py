@@ -208,7 +208,7 @@ def list_runs(
     if harness:
         query += " AND harness = ?"
         params.append(harness)
-    query += " ORDER BY started_at DESC LIMIT ?"
+    query += " ORDER BY COALESCE(completed_at, started_at) DESC, started_at DESC LIMIT ?"
     params.append(limit)
     with get_conn() as conn:
         rows = conn.execute(query, tuple(params)).fetchall()
