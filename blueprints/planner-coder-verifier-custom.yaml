@@ -1068,8 +1068,8 @@ mcp_servers:
   env:
     CGC_OUTPUT_FORMAT: gcf
 topology:
-  pattern: sequential-pipeline
-  enforcement_mode: prompt
+  pattern: generator-verifier-loop
+  enforcement_mode: dual
   entry_node: root_orchestrator
   edges:
   - id: e1_plan
