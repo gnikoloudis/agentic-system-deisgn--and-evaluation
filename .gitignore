@@ -27,6 +27,12 @@ opencode.json
 execution.log
 *.log
 .code-graph/
+.claude/
+.opencode/
+mcp.json
+opencode.json
+
+
 # Environment & secrets
 .env
 .env.local
