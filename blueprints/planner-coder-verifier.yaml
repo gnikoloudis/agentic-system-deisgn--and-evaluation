@@ -69,12 +69,15 @@ subagents:
     3. Return a concise, numbered implementation blueprint specifying exact file paths, functions, and
     edge cases to test.
 
+    4. Use the code-graph MCP for better understanding the code and the functionality
+
     '
   tools:
   - read
   - grep
   - glob
-  mcp_servers: []
+  mcp_servers:
+  - code-graph
   permissions:
     allow_shell: false
     allow_write: false
@@ -94,6 +97,8 @@ subagents:
 
     Write clean, idiomatic code and add or update unit tests as needed.
 
+    Use the code-graph MCP for better understanding the code and the functionality
+
     Summarize the exact files and lines changed when returning to the Orchestrator.
 
     '
@@ -104,7 +109,8 @@ subagents:
   - grep
   - glob
   - bash
-  mcp_servers: []
+  mcp_servers:
+  - code-graph
   permissions:
     allow_shell: true
     allow_write: true
@@ -126,7 +132,9 @@ subagents:
 
     3. Use the palywright mcp to verifiy also the visual implementation
 
-    4. End your response with `VERDICT: PASS` if all tests pass and code quality is high, or `VERDICT:
+    4. Use the code-graph MCP for better understanding the code and the functionality
+
+    5. End your response with `VERDICT: PASS` if all tests pass and code quality is high, or `VERDICT:
     FAIL` followed by concrete, line-level defects for the `coder`.
 
     '
@@ -136,6 +144,7 @@ subagents:
   - bash
   mcp_servers:
   - playwright
+  - code-graph
   permissions:
     allow_shell: true
     allow_write: false
@@ -147,29 +156,6 @@ subagents:
     - git status
     blocked_commands: []
   max_turns: 12
-- id: specialist_4
-  name: Specialist Agent 4
-  role: Handles specialized subtask delegated by the orchestrator
-  model: coding
-  harness_models: {}
-  system_prompt: You are specialist_4. Execute your delegated responsibility cleanly and return a concise
-    summary.
-  tools:
-  - read
-  - write
-  - edit
-  - grep
-  - glob
-  - bash
-  mcp_servers: []
-  permissions:
-    allow_shell: true
-    allow_write: true
-    allow_network: false
-    allowed_commands: []
-    blocked_commands:
-    - rm -rf /
-  max_turns: 15
 skills:
 - id: diff-audit
   name: Git Diff & Regression Audit
@@ -183,7 +169,7 @@ skills:
     '
   source_dir: null
   trigger_command: /diff-audit
-- id: ba-template-2
+- id: python-pro
   name: Python Pro
   description: Master Python 3.12+ with modern features, async programming, performance optimization,
     and production-ready practices. Expert in the latest Python ecosystem including uv, ruff, pydantic,
@@ -437,7 +423,7 @@ skills:
 
     1. **Analyze requirements** for modern Python '
   source_dir: D:/AI Harness skills/skills/python-pro
-  trigger_command: /ba-template-2
+  trigger_command: /python-pro
 - id: ba-template-3
   name: Api Design Principles
   description: Master REST and GraphQL API design principles to build intuitive, scalable, and maintainable
@@ -626,7 +612,7 @@ skills:
     - **Tight Coupling**: API structure shouldn''t mirror database schema'
   source_dir: D:/AI Harness skills/skills/api-design-principles
   trigger_command: /ba-template-3
-- id: ba-template-4
+- id: fastapi-export
   name: Fastapi Expert
   description: 'Use when building high-performance async Python APIs with FastAPI and Pydantic V2. Invoke
     to create REST endpoints, define Pydantic models, implement authentication flows, set up async SQLAlchemy
@@ -694,8 +680,8 @@ skills:
     \nFastAPI, Pydantic V2, async SQLAlchemy, Alembic migrations, JWT/OAuth2, pytest-asyncio, httpx, BackgroundTasks,\
     \ WebSockets, dependency injection, OpenAPI/Swagger\n\n[Documentation](https://jeffallan.github.io/claude-skil"
   source_dir: D:/AI Harness skills/skills/fastapi-expert
-  trigger_command: /ba-template-4
-- id: ba-template-5
+  trigger_command: /fastapi-export
+- id: frontend-design
   name: Frontend Design
   description: Guidance for distinctive, intentional visual design when building new UI or reshaping an
     existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated
@@ -806,8 +792,8 @@ skills:
     a risk can be a risk itself! Build to a quality floor without announcing it: responsive down to mobile,
     visible keyboard focus, reduced motion respected. Critique your own work as you build, t'
   source_dir: D:/AI Harness skills/skills/frontend-design
-  trigger_command: /ba-template-5
-- id: ba-template-6
+  trigger_command: /frontend-design
+- id: code-documenter
   name: Code Documenter
   description: Generates, formats, and validates technical documentation — including docstrings, OpenAPI/Swagger
     specs, JSDoc annotations, doc portals, and user guides. Use when adding docstrings to functions or
@@ -862,8 +848,8 @@ skills:
     Google/NumPy/Sphinx docstrings, JSDoc, OpenAPI 3.0/3.1, AsyncAPI, gRPC/protobuf, FastAPI, Django,\
     \ NestJS, Express, GraphQL, Docusaurus, MkDocs, VitePress, Swagger UI, Redoc, Stoplight\n\n[Documentation](https://jeffallan.github.io/claude-skills/skills/quality/code-documenter/)"
   source_dir: D:/AI Harness skills/skills/code-documenter
-  trigger_command: /ba-template-6
-- id: ba-template-7
+  trigger_command: /code-documenter
+- id: react-expert
   name: React Expert
   description: Use when building React 18+ applications in .jsx or .tsx files, Next.js App Router projects,
     or create-react-app setups. Creates components, implements custom hooks, debugs rendering issues,
@@ -915,8 +901,8 @@ skills:
     \ Query, Zustand, Redux Toolkit, React Router, React Testing Library, Vitest/Jest, Next.js App Router,\
     \ accessibility (WCAG)\n\n[Documentation](https://jeffallan.github.io/claude-skills/skills/frontend/react-expert/)"
   source_dir: D:\AI Harness skills\skills\tdd-guide
-  trigger_command: /ba-template-7
-- id: ba-template-8
+  trigger_command: /react-expert
+- id: tdd-guide
   name: Tdd Guide
   description: Test-Driven Development specialist enforcing write-tests-first methodology. Use PROACTIVELY
     when writing new features, fixing bugs, or refactoring code. Ensures 80%+ test coverage.
@@ -983,7 +969,7 @@ skills:
     \ Depend on Each Other\n```typescript\n// DON'T rely on previous test\ntest('creates user', () =>\
     \ { /* ... */ })\ntest('updates"
   source_dir: D:/AI Harness skills/skills/tdd-guide
-  trigger_command: /ba-template-8
+  trigger_command: /tdd-guide
 commands: []
 hooks:
 - id: enforce_orchestrator_delegation
@@ -1010,6 +996,15 @@ mcp_servers:
   - -y
   - '@modelcontextprotocol/server-filesystem'
   - .
+  url: null
+  env: {}
+- id: code-graph
+  description: Code graph for more efficeint code search and understanding
+  transport: stdio
+  command: npx
+  args:
+  - '@cartographai/mcp-server-codegraph'
+  - ${WORKSPACE}
   url: null
   env: {}
 topology:
@@ -1045,116 +1040,105 @@ topology:
     order: 4
     required: false
     max_loops: 3
-  - id: e_specialist_4
-    source: root_orchestrator
-    target: specialist_4
-    condition: 'Step 5: Delegate to specialist_4'
+  - id: e_ba-template-2_coder_611
+    source: coder
+    target: python-pro
+    condition: Applies /python-pro
     order: 5
-    required: true
+    required: false
+    max_loops: 1
+  - id: e_coder_react-expert_309
+    source: coder
+    target: react-expert
+    condition: Applies /react-expert
+    order: 6
+    required: false
+    max_loops: 1
+  - id: e_ba-template-8_coder_296
+    source: coder
+    target: tdd-guide
+    condition: Applies /tdd-guide
+    order: 7
+    required: false
+    max_loops: 1
+  - id: e_ba-template-4_planner_683
+    source: planner
+    target: fastapi-export
+    condition: Applies /ba-template-4
+    order: 8
+    required: false
+    max_loops: 1
+  - id: e_ba-template-5_planner_228
+    source: planner
+    target: frontend-design
+    condition: Applies /ba-template-5
+    order: 9
+    required: false
+    max_loops: 1
+  - id: e_verifier_ba-template-6_732
+    source: verifier
+    target: code-documenter
+    condition: Applies /ba-template-6
+    order: 10
+    required: false
     max_loops: 1
   - id: e_skill_diff_audit
     source: verifier
     target: diff-audit
     condition: Applies /diff-audit regression checklist
-    order: 6
-    required: false
-    max_loops: 1
-  - id: e_ba-template-2_coder_611
-    source: ba-template-2
-    target: coder
-    condition: Step 7 handoff
-    order: 7
-    required: true
-    max_loops: 1
-  - id: e_ba-template-3_planner_043
-    source: ba-template-3
-    target: planner
-    condition: Step 8 handoff
-    order: 8
-    required: true
-    max_loops: 1
-  - id: e_ba-template-4_planner_683
-    source: ba-template-4
-    target: planner
-    condition: Step 9 handoff
-    order: 9
-    required: true
-    max_loops: 1
-  - id: e_ba-template-5_planner_228
-    source: ba-template-5
-    target: planner
-    condition: Step 10 handoff
-    order: 10
-    required: true
-    max_loops: 1
-  - id: e_verifier_ba-template-6_732
-    source: verifier
-    target: ba-template-6
-    condition: Applies /ba-template-6
     order: 11
     required: false
-    max_loops: 1
-  - id: e_ba-template-7_planner_341
-    source: ba-template-7
-    target: planner
-    condition: Step 12 handoff
-    order: 12
-    required: true
-    max_loops: 1
-  - id: e_ba-template-8_coder_296
-    source: ba-template-8
-    target: coder
-    condition: Step 13 handoff
-    order: 13
-    required: true
     max_loops: 1
 visual_layout:
   nodes:
     root_orchestrator:
-      x: 401.0
-      y: -115.0
+      x: -15.0
+      y: 311.0
     planner:
-      x: -72.0
-      y: 750.0
+      x: -496.0
+      y: 506.0
     coder:
-      x: 520.0
-      y: 381.0
+      x: 14.0
+      y: 699.0
     verifier:
-      x: 397.0
-      y: 712.0
+      x: 727.0
+      y: 786.0
     diff-audit:
-      x: 458.0
-      y: 1193.0
+      x: 502.0
+      y: 1255.0
     enforce_orchestrator_delegation:
-      x: 457.0
-      y: -398.0
+      x: 93.0
+      y: -34.0
     require_verifier_before_stop:
-      x: 863.0
-      y: -266.0
+      x: 401.0
+      y: 126.0
     specialist_4:
-      x: -474.0
-      y: 60.0
-    ba-template-2:
-      x: 1288.0
-      y: 270.0
+      x: -62.0
+      y: 714.0
     ba-template-3:
-      x: -710.0
-      y: 304.0
-    ba-template-4:
-      x: -1138.0
-      y: 328.0
-    ba-template-5:
-      x: -1193.0
-      y: 659.0
-    ba-template-6:
-      x: 55.0
-      y: 1184.0
-    ba-template-7:
-      x: -1048.0
-      y: 1140.0
-    ba-template-8:
-      x: 942.0
-      y: 141.0
+      x: -1104.0
+      y: 296.0
     playwright:
-      x: 916.0
-      y: 1074.0
+      x: 930.0
+      y: 1214.0
+    tdd-guide:
+      x: -280.0
+      y: 1153.0
+    python-pro:
+      x: -436.0
+      y: 1452.0
+    fastapi-export:
+      x: -1124.0
+      y: 656.0
+    frontend-design:
+      x: -1117.0
+      y: 917.0
+    react-expert:
+      x: -592.0
+      y: 1178.0
+    code-documenter:
+      x: 163.0
+      y: 1278.0
+    code-graph:
+      x: 256.0
+      y: 950.0

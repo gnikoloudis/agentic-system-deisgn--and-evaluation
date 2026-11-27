@@ -277,24 +277,24 @@ topology:
     order: 5
     required: false
     max_loops: 3
+  - id: e_skill_qa_audit
+    source: ba_qa_gatekeeper
+    target: user-story
+    condition: Verifies stories against /user-story checklist
+    order: 6
+    required: false
+    max_loops: 1
   - id: e_skill_story
     source: user_story_author
     target: user-story
     condition: Applies /user-story template (3Cs + INVEST + BDD)
-    order: 6
+    order: 7
     required: false
     max_loops: 1
   - id: e_skill_delivery_rtm
     source: workflow_architect
     target: delivery-rtm-pack
     condition: Applies /delivery-rtm-pack workflow & Data Dictionary standard
-    order: 7
-    required: false
-    max_loops: 1
-  - id: e_skill_qa_audit
-    source: ba_qa_gatekeeper
-    target: user-story
-    condition: Verifies stories against /user-story checklist
     order: 8
     required: false
     max_loops: 1
