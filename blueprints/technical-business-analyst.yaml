@@ -322,5 +322,8 @@ visual_layout:
       x: -719.0
       y: 872.0
     enforce_ba_delegation:
-      x: 1026.0
-      y: -159.0
+      x: 828.0
+      y: -257.0
+    code-graph:
+      x: 148.0
+      y: 30.0

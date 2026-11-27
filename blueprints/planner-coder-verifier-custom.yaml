@@ -167,6 +167,29 @@ subagents:
     blocked_commands:
     - rm -rf /
   max_turns: 15
+- id: code-evaluator
+  name: Code evaluator
+  role: Handles specialized subtask delegated by the orchestrator
+  model: coding
+  harness_models: {}
+  system_prompt: You are a code evaluator reading the report from the `codegraph` mcp and find improvements.
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  - bash
+  mcp_servers:
+  - codegraph
+  permissions:
+    allow_shell: true
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+  max_turns: 15
 skills:
 - id: diff-audit
   name: Git Diff & Regression Audit
@@ -981,7 +1004,42 @@ skills:
     \ { /* ... */ })\ntest('updates"
   source_dir: D:/AI Harness skills/skills/tdd-guide
   trigger_command: /tdd-guide
-commands: []
+commands:
+- id: evaluate-code
+  description: Code grpah code evaluator
+  prompt: 'When the user requests  to evaluate the code using the codegraph mcp and propose improvments
+    do the following:
+
+
+    Please perform /plan for a comprehensive codebase evaluation using the MCP tools from code-graph /
+    codegraph (e.g. project_map, module_overview, semantic_code_search, get_call_graph, find_references,
+    get_ast_node, etc.):
+
+
+    Use project_map and module_overview to analyze the project structure, modules, classes, and dependencies
+    across the whole code tree.
+
+
+    Inspect key call graphs (get_call_graph) and symbol cross-references (find_references) for core task
+    services, recurrence engines, auth/security flows, and API routers.
+
+    Evaluate the codebase across:
+
+    Architecture & Modularity: Separation of concerns, dependency injection, coupling/cohesion, schema
+    reuse.
+
+    Performance & Scalability: Database queries, indexing, async I/O patterns, connection pooling, frontend
+    rendering efficiency.
+
+    Security & Resilience: Authentication/JWT lifecycle, Argon2id hashing, input sanitization, error envelopes,
+    rate limiting, transaction boundaries.
+
+    Maintainability & Test Coverage: Test completeness, test isolation, code readability, typing.
+
+    Formulate concrete, prioritized architectural and code improvements (e.g. High, Medium, Low priority)
+    with exact file references and rationale. Return your comprehensive evaluation report and proposed
+    improvements plan.'
+  agent: null
 hooks:
 - id: enforce_orchestrator_delegation
   event: PreToolUse
@@ -998,7 +1056,17 @@ hooks:
   action: block
   command: null
   message: 'Cannot finish task until the `verifier` subagent has executed and reported VERDICT: PASS.'
-mcp_servers: []
+mcp_servers:
+- id: codegraph
+  description: Stdio MCP server (codegraphcontext mcp start)
+  transport: stdio
+  command: codegraphcontext
+  args:
+  - mcp
+  - start
+  url: null
+  env:
+    CGC_OUTPUT_FORMAT: gcf
 topology:
   pattern: sequential-pipeline
   enforcement_mode: prompt
@@ -1039,60 +1107,67 @@ topology:
     order: 5
     required: true
     max_loops: 1
+  - id: e_specialist_5
+    source: root_orchestrator
+    target: code-evaluator
+    condition: 'Step 14: Delegate to specialist_5'
+    order: 6
+    required: true
+    max_loops: 1
   - id: e_ba-template-2_coder_611
     source: coder
     target: python-pro
     condition: Applies /python-pro
-    order: 6
+    order: 7
     required: false
     max_loops: 1
   - id: e_ba-template-8_coder_296
     source: coder
     target: tdd-guide
     condition: Applies /tdd-guide
-    order: 7
+    order: 8
     required: false
     max_loops: 1
   - id: e_ba-template-3_planner_043
     source: planner
     target: api_deisgn-principles
     condition: Applies /api_deisgn-principles
-    order: 8
+    order: 9
     required: false
     max_loops: 1
   - id: e_ba-template-4_planner_683
     source: planner
     target: fastpapi-expert
     condition: Applies /fastpapi-expert
-    order: 9
+    order: 10
     required: false
     max_loops: 1
   - id: e_ba-template-5_planner_228
     source: planner
     target: front-end-design
     condition: Applies /front-end-design
-    order: 10
+    order: 11
     required: false
     max_loops: 1
   - id: e_ba-template-7_planner_341
     source: planner
     target: react-expert
     condition: Applies /react-expert
-    order: 11
+    order: 12
     required: false
     max_loops: 1
   - id: e_verifier_ba-template-6_732
     source: verifier
     target: ba-template-6
     condition: Applies /ba-template-6
-    order: 12
+    order: 13
     required: false
     max_loops: 1
   - id: e_skill_diff_audit
     source: verifier
     target: diff-audit
     condition: Applies /diff-audit regression checklist
-    order: 13
+    order: 14
     required: false
     max_loops: 1
 visual_layout:
@@ -1142,3 +1217,9 @@ visual_layout:
     python-pro:
       x: 1288.0
       y: 270.0
+    code-evaluator:
+      x: 1266.0
+      y: -14.0
+    codegraph:
+      x: 2009.0
+      y: 465.0
