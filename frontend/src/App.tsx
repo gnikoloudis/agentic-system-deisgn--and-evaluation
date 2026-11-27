@@ -90,6 +90,19 @@ export default function App() {
   const [mcpImportAssignAgents, setMcpImportAssignAgents] = useState<string[]>([]);
   const [mcpJsonError, setMcpJsonError] = useState<string | null>(null);
 
+  // Save / Save-As Blueprint modal & collapsible left sidebar state
+  const [showSaveBlueprintModal, setShowSaveBlueprintModal] = useState<boolean>(false);
+  const [saveModalName, setSaveModalName] = useState<string>("");
+  const [saveModalId, setSaveModalId] = useState<string>("");
+  const [saveModalVersion, setSaveModalVersion] = useState<string>("1.0.0");
+  const [saveModalIdTouched, setSaveModalIdTouched] = useState<boolean>(false);
+  const [saveModalError, setSaveModalError] = useState<string | null>(null);
+  const [sidebarSections, setSidebarSections] = useState<{
+    blueprints: boolean;
+    primitives: boolean;
+    topology: boolean;
+  }>({ blueprints: true, primitives: true, topology: true });
+
   const [previewHarness, setPreviewHarness] = useState<HarnessType>("claude_code");
   const [harnessModels, setHarnessModels] = useState<HarnessModelsConfig | null>(null);
   const [newCustomModelId, setNewCustomModelId] = useState<string>("");
@@ -461,6 +474,91 @@ export default function App() {
         setSaveStatus("unsaved");
       }
     }, 700);
+  };
+
+  const slugifyBlueprintId = (raw: string) =>
+    raw
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "custom-blueprint";
+
+  const openSaveBlueprintModal = (suggestNewCopy = false) => {
+    if (!selectedBlueprint) return;
+    setSaveModalError(null);
+    if (suggestNewCopy) {
+      const baseName = selectedBlueprint.metadata.name.replace(/\s*\(Custom\)|\s*\(Copy\)$/i, "").trim();
+      const suggestedName = `${baseName} (Custom)`;
+      let suggestedId = `${selectedBlueprint.metadata.id.replace(/-custom(-\d+)?$/, "")}-custom`;
+      let n = 2;
+      const existingIds = new Set(blueprints.map((b) => b.metadata.id));
+      while (existingIds.has(suggestedId)) {
+        suggestedId = `${selectedBlueprint.metadata.id.replace(/-custom(-\d+)?$/, "")}-custom-${n++}`;
+      }
+      setSaveModalName(suggestedName);
+      setSaveModalId(suggestedId);
+      setSaveModalVersion(selectedBlueprint.metadata.version || "1.0.0");
+      setSaveModalIdTouched(false);
+    } else {
+      setSaveModalName(selectedBlueprint.metadata.name);
+      setSaveModalId(selectedBlueprint.metadata.id);
+      setSaveModalVersion(selectedBlueprint.metadata.version || "1.0.0");
+      setSaveModalIdTouched(true);
+    }
+    setShowSaveBlueprintModal(true);
+  };
+
+  const confirmSaveBlueprintFromModal = async (asNewCopy: boolean) => {
+    if (!selectedBlueprint) return;
+    const cleanName = saveModalName.trim();
+    const cleanId = slugifyBlueprintId(saveModalId || cleanName);
+    const cleanVersion = saveModalVersion.trim() || selectedBlueprint.metadata.version || "1.0.0";
+    if (!cleanName) {
+      setSaveModalError("Please enter a blueprint name.");
+      return;
+    }
+    if (asNewCopy && blueprints.some((b) => b.metadata.id === cleanId)) {
+      setSaveModalError(`Blueprint ID '${cleanId}' already exists. Choose a different name or ID for the new copy.`);
+      return;
+    }
+    try {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      setSaveStatus("saving");
+      const updatedBp: AgentArchitecture = {
+        ...selectedBlueprint,
+        metadata: {
+          ...selectedBlueprint.metadata,
+          id: cleanId,
+          name: cleanName,
+          version: cleanVersion,
+        },
+      };
+      const payload: { blueprint: AgentArchitecture; previous_id?: string } = {
+        blueprint: updatedBp,
+      };
+      if (!asNewCopy && cleanId !== selectedBlueprint.metadata.id) {
+        payload.previous_id = selectedBlueprint.metadata.id;
+      }
+      const saved = await api.saveBlueprint(payload);
+      setSelectedBlueprint(saved.blueprint);
+      setRawYaml(saved.raw_yaml);
+      setBlueprints(await api.listBlueprints());
+      const comp = await api.compilePreviewInline(saved.blueprint, previewHarness);
+      setCompiledResult(comp);
+      setSaveStatus("saved");
+      setShowSaveBlueprintModal(false);
+      notify(
+        asNewCopy
+          ? `Saved new blueprint copy '${saved.blueprint.metadata.name}' (${saved.blueprint.metadata.id})`
+          : `Saved blueprint '${saved.blueprint.metadata.name}' (v${saved.blueprint.metadata.version})`
+      );
+    } catch (err: unknown) {
+      setSaveStatus("unsaved");
+      setSaveModalError(err instanceof Error ? err.message : "Failed to save blueprint");
+    }
   };
 
   const handleSaveBlueprint = async (useRawYaml = false) => {
@@ -1283,45 +1381,84 @@ export default function App() {
         {/* ==================== TAB 1: ARCHITECTURE STUDIO ==================== */}
         {activeTab === "studio" && selectedBlueprint && (
           <div className="flex-1 flex overflow-hidden">
-            {/* Left Sidebar: Blueprint Presets & Palette */}
-            <aside className="w-72 border-r border-slate-800 bg-slate-900/60 flex flex-col shrink-0">
-              <div className="p-3.5 border-b border-slate-800 max-h-[48%] overflow-y-auto">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                    Architecture Blueprints ({blueprints.length})
-                  </div>
+            {/* Left Sidebar: Unified Scroll with Collapsible Sections */}
+            <aside className="w-80 border-r border-slate-800 bg-slate-900/60 flex flex-col shrink-0 overflow-y-auto">
+              {/* Section 1: Architecture Blueprints */}
+              <div className="border-b border-slate-800">
+                <div className="px-3.5 py-2.5 flex items-center justify-between gap-2 bg-slate-900/80">
                   <button
-                    onClick={handleDuplicateBlueprint}
-                    className="flex items-center gap-1 px-2 py-0.5 rounded bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-semibold cursor-pointer"
-                    title="Clone selected blueprint as a new custom architecture"
+                    onClick={() =>
+                      setSidebarSections((s) => ({ ...s, blueprints: !s.blueprints }))
+                    }
+                    className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-300 hover:text-white cursor-pointer"
+                  >
+                    <span className="text-slate-500 text-[10px]">
+                      {sidebarSections.blueprints ? "▾" : "▸"}
+                    </span>
+                    Blueprints ({blueprints.length})
+                  </button>
+                  <button
+                    onClick={() => openSaveBlueprintModal(true)}
+                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 text-[10px] font-semibold whitespace-nowrap shrink-0 cursor-pointer"
+                    title="Clone selected blueprint with a custom name"
                   >
                     <Plus className="w-3 h-3" /> New / Clone
                   </button>
                 </div>
-                <div className="space-y-1.5">
-                  {blueprints.map((bp) => {
-                    const isSel = bp.metadata.id === selectedBlueprint.metadata.id;
-                    const isRenaming = renamingBlueprintId === bp.metadata.id;
-                    return (
-                      <div
-                        key={bp.metadata.id}
-                        onClick={() => handleSelectBlueprint(bp.metadata.id)}
-                        className={`w-full text-left p-2.5 rounded-xl border transition-all cursor-pointer group ${isSel
-                          ? "bg-indigo-950/70 border-indigo-500/80 text-white"
-                          : "bg-slate-900/80 border-slate-800 text-slate-300 hover:border-slate-700"
-                          }`}
-                      >
-                        {isRenaming ? (
-                          <div
-                            className="flex items-center gap-1"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <input
-                              autoFocus
-                              value={renamingBlueprintTitle}
-                              onChange={(e) => setRenamingBlueprintTitle(e.target.value)}
-                              onKeyDown={async (e) => {
-                                if (e.key === "Enter" && renamingBlueprintTitle.trim()) {
+
+                {sidebarSections.blueprints && (
+                  <div className="px-3 pb-3 pt-1 space-y-1.5">
+                    {blueprints.map((bp) => {
+                      const isSel = bp.metadata.id === selectedBlueprint.metadata.id;
+                      const isRenaming = renamingBlueprintId === bp.metadata.id;
+                      return (
+                        <div
+                          key={bp.metadata.id}
+                          onClick={() => handleSelectBlueprint(bp.metadata.id)}
+                          className={`w-full text-left px-2.5 py-2 rounded-lg border transition-all cursor-pointer group ${isSel
+                            ? "bg-indigo-950/75 border-indigo-500/80 text-white shadow-sm"
+                            : "bg-slate-950/60 border-slate-800/90 text-slate-300 hover:border-slate-700 hover:bg-slate-900/80"
+                            }`}
+                        >
+                          {isRenaming ? (
+                            <div
+                              className="flex items-center gap-1"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <input
+                                autoFocus
+                                value={renamingBlueprintTitle}
+                                onChange={(e) => setRenamingBlueprintTitle(e.target.value)}
+                                onKeyDown={async (e) => {
+                                  if (e.key === "Enter" && renamingBlueprintTitle.trim()) {
+                                    const full = await api.getBlueprint(bp.metadata.id);
+                                    const updatedBp: AgentArchitecture = {
+                                      ...full.blueprint,
+                                      metadata: {
+                                        ...full.blueprint.metadata,
+                                        name: renamingBlueprintTitle.trim(),
+                                      },
+                                    };
+                                    const saved = await api.saveBlueprint({ blueprint: updatedBp });
+                                    if (isSel) {
+                                      setSelectedBlueprint(saved.blueprint);
+                                      setRawYaml(saved.raw_yaml);
+                                    }
+                                    setBlueprints(await api.listBlueprints());
+                                    setRenamingBlueprintId(null);
+                                    notify(`Renamed blueprint to '${saved.blueprint.metadata.name}'`);
+                                  } else if (e.key === "Escape") {
+                                    setRenamingBlueprintId(null);
+                                  }
+                                }}
+                                className="flex-1 bg-slate-950 border border-indigo-500 rounded px-2 py-1 text-xs text-white focus:outline-none"
+                              />
+                              <button
+                                onClick={async () => {
+                                  if (!renamingBlueprintTitle.trim()) {
+                                    setRenamingBlueprintId(null);
+                                    return;
+                                  }
                                   const full = await api.getBlueprint(bp.metadata.id);
                                   const updatedBp: AgentArchitecture = {
                                     ...full.blueprint,
@@ -1338,216 +1475,206 @@ export default function App() {
                                   setBlueprints(await api.listBlueprints());
                                   setRenamingBlueprintId(null);
                                   notify(`Renamed blueprint to '${saved.blueprint.metadata.name}'`);
-                                } else if (e.key === "Escape") {
-                                  setRenamingBlueprintId(null);
-                                }
-                              }}
-                              className="flex-1 bg-slate-950 border border-indigo-500 rounded px-2 py-1 text-xs text-white focus:outline-none"
-                            />
-                            <button
-                              onClick={async () => {
-                                if (!renamingBlueprintTitle.trim()) {
-                                  setRenamingBlueprintId(null);
-                                  return;
-                                }
-                                const full = await api.getBlueprint(bp.metadata.id);
-                                const updatedBp: AgentArchitecture = {
-                                  ...full.blueprint,
-                                  metadata: {
-                                    ...full.blueprint.metadata,
-                                    name: renamingBlueprintTitle.trim(),
-                                  },
-                                };
-                                const saved = await api.saveBlueprint({ blueprint: updatedBp });
-                                if (isSel) {
-                                  setSelectedBlueprint(saved.blueprint);
-                                  setRawYaml(saved.raw_yaml);
-                                }
-                                setBlueprints(await api.listBlueprints());
-                                setRenamingBlueprintId(null);
-                                notify(`Renamed blueprint to '${saved.blueprint.metadata.name}'`);
-                              }}
-                              className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold cursor-pointer"
-                            >
-                              Save
-                            </button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-between gap-1.5">
-                            <span className="font-semibold text-xs truncate">
-                              {bp.metadata.name}
-                            </span>
-                            <div className="flex items-center gap-1 shrink-0">
-                              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300">
-                                v{bp.metadata.version}
-                              </span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setRenamingBlueprintId(bp.metadata.id);
-                                  setRenamingBlueprintTitle(bp.metadata.name);
                                 }}
-                                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-cyan-300 transition-colors cursor-pointer"
-                                title={`Rename '${bp.metadata.name}'`}
+                                className="px-2 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold cursor-pointer"
                               >
-                                <Pencil className="w-3 h-3" />
-                              </button>
-                              <button
-                                onClick={async (e) => {
-                                  e.stopPropagation();
-                                  if (blueprints.length <= 1) {
-                                    notify("Cannot delete the last remaining architecture blueprint", "err");
-                                    return;
-                                  }
-                                  try {
-                                    await api.deleteBlueprint(bp.metadata.id);
-                                    const remaining = await api.listBlueprints();
-                                    setBlueprints(remaining);
-                                    if (isSel && remaining.length > 0) {
-                                      await handleSelectBlueprint(remaining[0].metadata.id);
-                                    }
-                                    notify(`Deleted architecture blueprint '${bp.metadata.name}'`);
-                                  } catch (err: unknown) {
-                                    notify(
-                                      err instanceof Error ? err.message : "Failed to delete blueprint",
-                                      "err"
-                                    );
-                                  }
-                                }}
-                                className="p-1 rounded hover:bg-rose-950 text-slate-400 hover:text-rose-400 transition-colors cursor-pointer"
-                                title={`Delete '${bp.metadata.name}'`}
-                              >
-                                <Trash2 className="w-3 h-3" />
+                                Save
                               </button>
                             </div>
+                          ) : (
+                            <div className="flex items-center justify-between gap-1.5">
+                              <span className="font-semibold text-xs truncate">
+                                {bp.metadata.name}
+                              </span>
+                              <div className="flex items-center gap-0.5 shrink-0">
+                                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-800/90 text-indigo-300">
+                                  v{bp.metadata.version}
+                                </span>
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setRenamingBlueprintId(bp.metadata.id);
+                                    setRenamingBlueprintTitle(bp.metadata.name);
+                                  }}
+                                  className="p-1 rounded hover:bg-slate-800 text-slate-500 hover:text-cyan-300 transition-colors cursor-pointer"
+                                  title={`Rename '${bp.metadata.name}'`}
+                                >
+                                  <Pencil className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (blueprints.length <= 1) {
+                                      notify("Cannot delete the last remaining architecture blueprint", "err");
+                                      return;
+                                    }
+                                    try {
+                                      await api.deleteBlueprint(bp.metadata.id);
+                                      const remaining = await api.listBlueprints();
+                                      setBlueprints(remaining);
+                                      if (isSel && remaining.length > 0) {
+                                        await handleSelectBlueprint(remaining[0].metadata.id);
+                                      }
+                                      notify(`Deleted architecture blueprint '${bp.metadata.name}'`);
+                                    } catch (err: unknown) {
+                                      notify(
+                                        err instanceof Error ? err.message : "Failed to delete blueprint",
+                                        "err"
+                                      );
+                                    }
+                                  }}
+                                  className="p-1 rounded hover:bg-rose-950 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+                                  title={`Delete '${bp.metadata.name}'`}
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          <div className="mt-1 text-[10px] text-slate-400 truncate">
+                            {bp.topology.pattern} · {bp.subagents.length} agent{bp.subagents.length === 1 ? "" : "s"} · {bp.hooks.length} hook{bp.hooks.length === 1 ? "" : "s"}
                           </div>
-                        )}
-                        <div className="flex items-center gap-2 mt-1.5 text-[10px] text-slate-400">
-                          <span>{bp.topology.pattern}</span>
-                          <span>•</span>
-                          <span>{bp.subagents.length} subagents</span>
-                          <span>•</span>
-                          <span>{bp.hooks.length} hooks</span>
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
-              {/* Add Primitives Palette */}
-              <div className="p-3.5 border-b border-slate-800 space-y-2">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Add Harness Primitives
-                </div>
+              {/* Section 2: Add Harness Primitives (Compact 2-Column Grid) */}
+              <div className="border-b border-slate-800">
                 <button
-                  onClick={handleAddSubagent}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-700/50 text-cyan-200 text-xs font-medium cursor-pointer"
+                  onClick={() =>
+                    setSidebarSections((s) => ({ ...s, primitives: !s.primitives }))
+                  }
+                  className="w-full px-3.5 py-2.5 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-300 hover:text-white bg-slate-900/80 cursor-pointer"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add Subagent Node
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-slate-500 text-[10px]">
+                      {sidebarSections.primitives ? "▾" : "▸"}
+                    </span>
+                    Add Primitives
+                  </span>
                 </button>
-                <button
-                  onClick={handleAddSkill}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-700/50 text-emerald-200 text-xs font-medium cursor-pointer"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  Add Skill / Doc Template
-                </button>
-                <button
-                  onClick={handleAddGuardrailHook}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-950/60 hover:bg-amber-900/60 border border-amber-700/50 text-amber-200 text-xs font-medium cursor-pointer"
-                >
-                  <ShieldAlert className="w-3.5 h-3.5" />
-                  Add Lifecycle Guardrail Hook
-                </button>
-                <button
-                  onClick={() => handleAddMcpServer()}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-950/60 hover:bg-purple-900/60 border border-purple-700/50 text-purple-200 text-xs font-medium cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add MCP Server Node
-                </button>
-                <button
-                  onClick={() => {
-                    setMcpJsonError(null);
-                    setShowMcpJsonModal(true);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-purple-950/40 hover:bg-purple-900/50 border border-purple-700/40 text-purple-300 text-xs font-medium cursor-pointer"
-                >
-                  <Code2 className="w-3.5 h-3.5" />
-                  Import MCP JSON (mcpServers)
-                </button>
-                <button
-                  onClick={handleDuplicateBlueprint}
-                  className="w-full flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium cursor-pointer"
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  Clone as My Custom Blueprint
-                </button>
+
+                {sidebarSections.primitives && (
+                  <div className="px-3 pb-3 pt-1 grid grid-cols-2 gap-1.5">
+                    <button
+                      onClick={handleAddSubagent}
+                      className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-700/50 text-cyan-200 text-[11px] font-medium cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">Subagent</span>
+                    </button>
+                    <button
+                      onClick={handleAddSkill}
+                      className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-700/50 text-emerald-200 text-[11px] font-medium cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">Skill</span>
+                    </button>
+                    <button
+                      onClick={handleAddGuardrailHook}
+                      className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-amber-950/60 hover:bg-amber-900/60 border border-amber-700/50 text-amber-200 text-[11px] font-medium cursor-pointer"
+                    >
+                      <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">Guardrail</span>
+                    </button>
+                    <button
+                      onClick={() => handleAddMcpServer()}
+                      className="flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-purple-950/60 hover:bg-purple-900/60 border border-purple-700/50 text-purple-200 text-[11px] font-medium cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5 shrink-0" />
+                      <span className="truncate">MCP Server</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMcpJsonError(null);
+                        setShowMcpJsonModal(true);
+                      }}
+                      className="col-span-2 flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-950/40 hover:bg-purple-900/50 border border-purple-700/40 text-purple-300 text-[11px] font-medium cursor-pointer"
+                    >
+                      <Code2 className="w-3.5 h-3.5 shrink-0" />
+                      Import MCP JSON (mcpServers)
+                    </button>
+                  </div>
+                )}
               </div>
 
-              {/* Topology Pattern & Enforcement Mode */}
-              <div className="p-3.5 space-y-3 overflow-y-auto flex-1">
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Topology & Enforcement
-                </div>
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Topology Pattern</label>
-                  <select
-                    value={selectedBlueprint.topology.pattern}
-                    onChange={(e) =>
-                      handleCanvasBlueprintChange({
-                        ...selectedBlueprint,
-                        topology: {
-                          ...selectedBlueprint.topology,
-                          pattern: e.target.value as AgentArchitecture["topology"]["pattern"],
-                        },
-                      })
-                    }
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
-                  >
-                    <option value="solo">solo (Single Agent)</option>
-                    <option value="sequential-pipeline">sequential-pipeline</option>
-                    <option value="generator-verifier-loop">generator-verifier-loop (Actor-Critic)</option>
-                    <option value="parallel-swarm">parallel-swarm</option>
-                    <option value="router-dispatcher">router-dispatcher</option>
-                    <option value="hierarchical-custom">hierarchical-custom</option>
-                  </select>
-                </div>
+              {/* Section 3: Topology Pattern & Enforcement Mode */}
+              <div>
+                <button
+                  onClick={() =>
+                    setSidebarSections((s) => ({ ...s, topology: !s.topology }))
+                  }
+                  className="w-full px-3.5 py-2.5 flex items-center justify-between text-[11px] font-bold uppercase tracking-wider text-slate-300 hover:text-white bg-slate-900/80 cursor-pointer"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <span className="text-slate-500 text-[10px]">
+                      {sidebarSections.topology ? "▾" : "▸"}
+                    </span>
+                    Topology &amp; Enforcement
+                  </span>
+                </button>
 
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">
-                    Dual-Mode Compilation Guard
-                  </label>
-                  <select
-                    value={selectedBlueprint.topology.enforcement_mode}
-                    onChange={(e) =>
-                      handleCanvasBlueprintChange({
-                        ...selectedBlueprint,
-                        topology: {
-                          ...selectedBlueprint.topology,
-                          enforcement_mode: e.target.value as "prompt" | "hook" | "dual",
-                        },
-                      })
-                    }
-                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
-                  >
-                    <option value="dual">Dual (Prompt Contract + State-Machine Hooks)</option>
-                    <option value="prompt">Prompt Routing Contract Only</option>
-                    <option value="hook">Runtime Hook State-Machine Only</option>
-                  </select>
-                </div>
+                {sidebarSections.topology && (
+                  <div className="px-3.5 pb-4 pt-1 space-y-2.5">
+                    <div>
+                      <label className="block text-[11px] text-slate-400 mb-1">Topology Pattern</label>
+                      <select
+                        value={selectedBlueprint.topology.pattern}
+                        onChange={(e) =>
+                          handleCanvasBlueprintChange({
+                            ...selectedBlueprint,
+                            topology: {
+                              ...selectedBlueprint.topology,
+                              pattern: e.target.value as AgentArchitecture["topology"]["pattern"],
+                            },
+                          })
+                        }
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                      >
+                        <option value="solo">solo (Single Agent)</option>
+                        <option value="sequential-pipeline">sequential-pipeline</option>
+                        <option value="generator-verifier-loop">generator-verifier-loop (Actor-Critic)</option>
+                        <option value="parallel-swarm">parallel-swarm</option>
+                        <option value="router-dispatcher">router-dispatcher</option>
+                        <option value="hierarchical-custom">hierarchical-custom</option>
+                      </select>
+                    </div>
 
-                <div className="pt-2">
-                  <button
-                    onClick={() => handleSaveBlueprint(false)}
-                    className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs cursor-pointer"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    Save Blueprint to Disk (.yaml)
-                  </button>
-                </div>
+                    <div>
+                      <label className="block text-[11px] text-slate-400 mb-1">
+                        Dual-Mode Compilation Guard
+                      </label>
+                      <select
+                        value={selectedBlueprint.topology.enforcement_mode}
+                        onChange={(e) =>
+                          handleCanvasBlueprintChange({
+                            ...selectedBlueprint,
+                            topology: {
+                              ...selectedBlueprint.topology,
+                              enforcement_mode: e.target.value as "prompt" | "hook" | "dual",
+                            },
+                          })
+                        }
+                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs"
+                      >
+                        <option value="dual">Dual (Prompt Contract + State-Machine Hooks)</option>
+                        <option value="prompt">Prompt Routing Contract Only</option>
+                        <option value="hook">Runtime Hook State-Machine Only</option>
+                      </select>
+                    </div>
+
+                    <button
+                      onClick={() => openSaveBlueprintModal(false)}
+                      className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs cursor-pointer"
+                    >
+                      <Save className="w-3.5 h-3.5" />
+                      Save / Save As Blueprint...
+                    </button>
+                  </div>
+                )}
               </div>
             </aside>
 
@@ -1582,8 +1709,9 @@ export default function App() {
                     title="Blueprint semantic version"
                   />
                   <button
-                    onClick={() => handleSaveBlueprint(false)}
+                    onClick={() => openSaveBlueprintModal(false)}
                     className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-500 text-white text-[11px] font-semibold cursor-pointer shrink-0"
+                    title="Confirm blueprint name or save as a new copy"
                   >
                     <Save className="w-3 h-3" /> Save
                   </button>
@@ -5834,6 +5962,112 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Save / Save-As Blueprint Modal */}
+      {showSaveBlueprintModal && selectedBlueprint && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl bg-slate-900 border border-indigo-700/60 shadow-2xl p-5 space-y-4 text-xs">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="text-sm font-bold text-white flex items-center gap-2">
+                  <Save className="w-4 h-4 text-indigo-400" />
+                  Save Architecture Blueprint
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Confirm the suggested name to update in place, or enter a new name to save as a separate copy.
+                </div>
+              </div>
+              <button
+                onClick={() => setShowSaveBlueprintModal(false)}
+                className="text-slate-400 hover:text-white text-sm px-2 py-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <label className="block text-[11px] text-slate-400 mb-1">Blueprint Name</label>
+                <input
+                  autoFocus
+                  value={saveModalName}
+                  onChange={(e) => {
+                    const nextName = e.target.value;
+                    setSaveModalName(nextName);
+                    setSaveModalError(null);
+                    if (!saveModalIdTouched) {
+                      setSaveModalId(slugifyBlueprintId(nextName));
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      confirmSaveBlueprintFromModal(saveModalId !== selectedBlueprint.metadata.id);
+                    }
+                  }}
+                  placeholder="e.g. My SDLC Engineering Team"
+                  className="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-2">
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    File ID <span className="text-[10px] text-slate-500">(.yaml filename)</span>
+                  </label>
+                  <input
+                    value={saveModalId}
+                    onChange={(e) => {
+                      setSaveModalId(e.target.value);
+                      setSaveModalIdTouched(true);
+                      setSaveModalError(null);
+                    }}
+                    placeholder="my-sdlc-team"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-lg px-2.5 py-1.5 font-mono text-[11px] text-cyan-300 focus:outline-none"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] text-slate-400 mb-1">Version</label>
+                  <input
+                    value={saveModalVersion}
+                    onChange={(e) => setSaveModalVersion(e.target.value)}
+                    placeholder="1.0.0"
+                    className="w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 rounded-lg px-2.5 py-1.5 font-mono text-[11px] text-indigo-300 focus:outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {saveModalError && (
+              <div className="p-2.5 rounded-lg bg-rose-950/70 border border-rose-700/70 text-rose-200 text-[11px]">
+                {saveModalError}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-1 flex-wrap">
+              <button
+                onClick={() => setShowSaveBlueprintModal(false)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => confirmSaveBlueprintFromModal(true)}
+                className="px-3 py-1.5 rounded-lg bg-cyan-700 hover:bg-cyan-600 text-white font-semibold cursor-pointer"
+                title="Create a new blueprint file without overwriting the original"
+              >
+                Save as New Copy
+              </button>
+              <button
+                onClick={() => confirmSaveBlueprintFromModal(false)}
+                className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold cursor-pointer"
+                title="Save changes to the current blueprint"
+              >
+                Save Current
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MCP JSON Importer Modal */}
       {showMcpJsonModal && selectedBlueprint && (
