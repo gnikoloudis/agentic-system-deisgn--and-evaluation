@@ -26,7 +26,7 @@ AGENTS.md
 opencode.json
 execution.log
 *.log
-
+.code-graph/
 # Environment & secrets
 .env
 .env.local
