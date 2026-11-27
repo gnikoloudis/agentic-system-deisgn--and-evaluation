@@ -383,3 +383,20 @@ export interface ClearStaleRunsResponse {
   cleared_run_ids: string[];
   removed_orphan_sandboxes: number;
 }
+
+export interface TokenPriceRate {
+  input_per_1m: number;
+  output_per_1m: number;
+  cache_read_per_1m: number;
+}
+
+export interface TokenPricingConfig {
+  providers: Record<string, Record<string, TokenPriceRate>>;
+  model_overrides: Record<string, TokenPriceRate>;
+}
+
+export interface AppUserConfig {
+  target_harness: HarnessType;
+  harness_locked: boolean;
+  token_pricing: TokenPricingConfig;
+}

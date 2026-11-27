@@ -71,9 +71,11 @@ def analyze_trajectory_and_topology(
         out_t = ev.output_tokens
         cost_u = ev.cost_usd
         if ev.event_type in ("PreToolUse", "SubagentStart") and in_t == 0 and out_t == 0:
+            from app.runner.transcript_parsers import estimate_cost_usd
+
             in_t = 480 if ev.event_type == "SubagentStart" else 340
             out_t = 320 if ev.event_type == "SubagentStart" else 160
-            cost_u = round((in_t * 3.0 + out_t * 15.0) / 1_000_000, 6)
+            cost_u = estimate_cost_usd(in_t, out_t)
 
         nb.duration_ms += ev_dur
         nb.input_tokens += in_t

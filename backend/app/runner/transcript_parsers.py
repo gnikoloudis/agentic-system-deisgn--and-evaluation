@@ -15,27 +15,75 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _detect_provider_and_tier(model: str, explicit_provider: Optional[str] = None) -> tuple[str, str]:
+    """Infer (provider_id, tier_key) from a model ID or explicit provider."""
+    m = (model or "").strip().lower()
+
+    # 1. Detect provider
+    if explicit_provider and explicit_provider.strip():
+        provider = explicit_provider.strip().lower()
+    elif "/" in m:
+        provider = m.split("/", 1)[0]
+    elif "claude" in m or "opus" in m or "sonnet" in m or "haiku" in m:
+        provider = "anthropic"
+    elif "gemini" in m or "argon" in m or "neon" in m or "hydrogen" in m or m in ("pro", "flash"):
+        provider = "google"
+    elif "gpt" in m or m.startswith(("o1", "o3", "o4")):
+        provider = "openai"
+    elif "big-pickle" in m or "-free" in m:
+        provider = "opencode"
+    else:
+        provider = "anthropic"
+
+    # 2. Detect tier
+    if "-free" in m or m == "free":
+        tier = "free"
+    elif "opus" in m or "neon-xhigh" in m or "neon-high" in m or "hydrogen-high" in m or "reasoning" in m or m.startswith(("o1", "o3")):
+        tier = "reasoning"
+    elif "haiku" in m or "flash" in m or "lightning" in m or "fast" in m or "argon-low" in m or "mini" in m:
+        tier = "fast"
+    elif "argon-high" in m or "sonnet-5-5-high" in m or "big-pickle" in m or "coding" in m:
+        tier = "coding"
+    else:
+        tier = "default"
+
+    return provider, tier
+
+
 def estimate_cost_usd(
     input_tokens: int,
     output_tokens: int,
     cache_read_tokens: int = 0,
     model: str = "default",
+    provider: Optional[str] = None,
 ) -> float:
-    """Estimate token cost in USD using model-specific pricing across Claude Code, Antigravity, and OpenCode."""
-    m = (model or "").lower()
-    if "-free" in m:
-        in_rate, out_rate, cache_rate = 0.15 / 1_000_000, 0.60 / 1_000_000, 0.02 / 1_000_000
-    elif "opus" in m or "neon-xhigh" in m or "neon-high" in m or "hydrogen-high" in m or "reasoning" in m:
-        in_rate, out_rate, cache_rate = 15.0 / 1_000_000, 75.0 / 1_000_000, 1.50 / 1_000_000
-    elif "haiku" in m or "flash" in m or "lightning" in m or "fast" in m or "argon-low" in m:
-        in_rate, out_rate, cache_rate = 0.80 / 1_000_000, 4.0 / 1_000_000, 0.08 / 1_000_000
-    elif "argon-high" in m or "sonnet-5-5-high" in m:
-        in_rate, out_rate, cache_rate = 4.0 / 1_000_000, 18.0 / 1_000_000, 0.40 / 1_000_000
-    elif "big-pickle" in m:
-        in_rate, out_rate, cache_rate = 1.80 / 1_000_000, 7.50 / 1_000_000, 0.18 / 1_000_000
-    else:
-        # Sonnet / Argon Medium / default tier
-        in_rate, out_rate, cache_rate = 3.0 / 1_000_000, 15.0 / 1_000_000, 0.30 / 1_000_000
+    """Estimate token cost in USD using user-configurable per-provider/tier & per-model rates from AppUserConfig."""
+    from app.config import TokenPriceRate, get_app_config
+
+    pricing = get_app_config().token_pricing
+    m_raw = (model or "").strip()
+    m_lower = m_raw.lower()
+
+    # 1. Exact per-model override (case-insensitive)
+    rate: Optional[TokenPriceRate] = None
+    for override_key, override_rate in pricing.model_overrides.items():
+        if override_key.strip().lower() == m_lower:
+            rate = override_rate
+            break
+
+    # 2. Provider + tier lookup
+    if rate is None:
+        prov_id, tier_key = _detect_provider_and_tier(m_raw, provider)
+        prov_tiers = pricing.providers.get(prov_id)
+        if prov_tiers:
+            rate = prov_tiers.get(tier_key) or prov_tiers.get("default")
+        if rate is None:
+            fallback_tiers = pricing.providers.get("anthropic") or {}
+            rate = fallback_tiers.get(tier_key) or fallback_tiers.get("default") or TokenPriceRate()
+
+    in_rate = rate.input_per_1m / 1_000_000
+    out_rate = rate.output_per_1m / 1_000_000
+    cache_rate = rate.cache_read_per_1m / 1_000_000
     return round(input_tokens * in_rate + output_tokens * out_rate + cache_read_tokens * cache_rate, 6)
 
 

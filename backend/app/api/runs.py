@@ -309,12 +309,14 @@ async def api_evaluate_deployed_directory(req: EvaluateDirectoryRequest) -> RunR
         current_events = list_telemetry_events(run_id)
 
         # Backfill timestamp-delta durations and estimated tokens if legacy hook events had 0 duration/tokens
+        from app.runner.transcript_parsers import estimate_cost_usd
+
         prev_dt = None
         for ev in current_events:
             if ev.event_type in ("PreToolUse", "SubagentStart") and ev.input_tokens == 0 and ev.output_tokens == 0:
                 ev.input_tokens = 420
                 ev.output_tokens = 190
-                ev.cost_usd = round((ev.input_tokens * 3.0 + ev.output_tokens * 15.0) / 1_000_000, 6)
+                ev.cost_usd = estimate_cost_usd(ev.input_tokens, ev.output_tokens)
             try:
                 from datetime import datetime
                 curr_dt = datetime.fromisoformat(ev.timestamp.replace("Z", "+00:00"))

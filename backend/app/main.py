@@ -10,7 +10,13 @@ from app.api.blueprints import router as blueprints_router
 from app.api.evaluations import router as evaluations_router
 from app.api.runs import router as runs_router
 from app.api.tasks import router as tasks_router
-from app.config import ensure_directories
+from app.config import (
+    AppUserConfig,
+    ensure_directories,
+    get_app_config,
+    reset_app_token_pricing,
+    save_app_config,
+)
 from app.db.database import cleanup_orphaned_running_runs, init_db
 
 
@@ -53,3 +59,21 @@ def health_check():
         "service": "harnessforge",
         "supported_harnesses": ["claude_code", "antigravity", "opencode"],
     }
+
+
+@app.get("/api/config", response_model=AppUserConfig)
+def api_get_app_config() -> AppUserConfig:
+    """Return persisted application configuration (target harness, harness lock, and per-provider token pricing)."""
+    return get_app_config()
+
+
+@app.put("/api/config", response_model=AppUserConfig)
+def api_update_app_config(cfg: AppUserConfig) -> AppUserConfig:
+    """Update persisted application configuration."""
+    return save_app_config(cfg)
+
+
+@app.post("/api/config/reset-pricing", response_model=AppUserConfig)
+def api_reset_token_pricing() -> AppUserConfig:
+    """Reset per-provider token pricing back to built-in defaults."""
+    return reset_app_token_pricing()

@@ -13,16 +13,19 @@ import {
   GitCompare,
   Layers,
   Loader2,
+  Lock,
   Pencil,
   Play,
   Plus,
   RefreshCw,
   Save,
+  Settings,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
   Terminal,
   Trash2,
+  Unlock,
   Wand2,
   XCircle,
 } from "lucide-react";
@@ -32,6 +35,7 @@ import type {
   ABComparisonResponse,
   AdvisorSuggestion,
   AgentArchitecture,
+  AppUserConfig,
   CompilationResult,
   HarnessModelsConfig,
   HarnessType,
@@ -102,6 +106,17 @@ export default function App() {
     primitives: boolean;
     topology: boolean;
   }>({ blueprints: true, primitives: true, topology: true });
+
+  // Application Configuration (Target Harness Lock & Per-Provider Token Pricing)
+  const [appConfig, setAppConfig] = useState<AppUserConfig | null>(null);
+  const [appConfigDraft, setAppConfigDraft] = useState<AppUserConfig | null>(null);
+  const [showAppSettingsModal, setShowAppSettingsModal] = useState<boolean>(false);
+  const [pricingProviderTab, setPricingProviderTab] = useState<string>("anthropic");
+  const [newPricingProviderId, setNewPricingProviderId] = useState<string>("");
+  const [newOverrideModelId, setNewOverrideModelId] = useState<string>("");
+  const [newOverrideInput, setNewOverrideInput] = useState<string>("3.0");
+  const [newOverrideOutput, setNewOverrideOutput] = useState<string>("15.0");
+  const [newOverrideCache, setNewOverrideCache] = useState<string>("0.30");
 
   const [previewHarness, setPreviewHarness] = useState<HarnessType>("claude_code");
   const [harnessModels, setHarnessModels] = useState<HarnessModelsConfig | null>(null);
@@ -266,19 +281,25 @@ export default function App() {
 
   const loadInitialData = useCallback(async () => {
     try {
-      const [bps, tks, rns, hStatus, hModels, activeStatus] = await Promise.all([
+      const [bps, tks, rns, hStatus, hModels, activeStatus, fetchedAppCfg] = await Promise.all([
         api.listBlueprints(),
         api.listTasks(),
         api.listRuns(),
         api.getHarnessStatus(),
         api.getHarnessModels(),
         api.getActiveRun().catch(() => ({ has_active_run: false, active_run: null })),
+        api.getAppConfig().catch(() => null),
       ]);
       setBlueprints(bps);
       setTasks(tks);
       setRuns(rns);
       setHarnessStatus(hStatus);
       setHarnessModels(hModels);
+      if (fetchedAppCfg) {
+        setAppConfig(fetchedAppCfg);
+        setRunHarness(fetchedAppCfg.target_harness);
+        setPreviewHarness(fetchedAppCfg.target_harness);
+      }
 
       if (bps.length > 0) {
         let savedBpId: string | null = null;
@@ -438,6 +459,74 @@ export default function App() {
       cancelled = true;
     };
   }, [activeRun?.id]);
+
+  const handleSelectTargetHarness = async (nextH: HarnessType) => {
+    if (appConfig?.harness_locked && nextH !== appConfig.target_harness) {
+      notify(
+        `Target harness is locked to ${HARNESS_LABELS[appConfig.target_harness].name}. Unlock it in the header or Settings to switch.`,
+        "err"
+      );
+      return;
+    }
+    setRunHarness(nextH);
+    setPreviewHarness(nextH);
+    if (appConfig) {
+      try {
+        const saved = await api.updateAppConfig({ ...appConfig, target_harness: nextH });
+        setAppConfig(saved);
+      } catch {
+        // ignore transient save error
+      }
+    }
+  };
+
+  const handleToggleHarnessLock = async () => {
+    if (!appConfig) return;
+    const nextLocked = !appConfig.harness_locked;
+    try {
+      const saved = await api.updateAppConfig({
+        ...appConfig,
+        target_harness: runHarness,
+        harness_locked: nextLocked,
+      });
+      setAppConfig(saved);
+      setRunHarness(saved.target_harness);
+      setPreviewHarness(saved.target_harness);
+      notify(
+        nextLocked
+          ? `Locked target harness to ${HARNESS_LABELS[saved.target_harness].name} for this session and future reloads.`
+          : `Unlocked target harness — you can now switch freely.`
+      );
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to update harness lock", "err");
+    }
+  };
+
+  const openAppSettingsModal = () => {
+    if (!appConfig) return;
+    setAppConfigDraft(JSON.parse(JSON.stringify(appConfig)));
+    const provKeys = Object.keys(appConfig.token_pricing.providers || {});
+    if (provKeys.length > 0 && !provKeys.includes(pricingProviderTab)) {
+      setPricingProviderTab(provKeys[0]);
+    }
+    setShowAppSettingsModal(true);
+  };
+
+  const handleSaveAppSettingsModal = async () => {
+    if (!appConfigDraft) return;
+    try {
+      const saved = await api.updateAppConfig(appConfigDraft);
+      setAppConfig(saved);
+      setRunHarness(saved.target_harness);
+      setPreviewHarness(saved.target_harness);
+      setShowAppSettingsModal(false);
+      notify(
+        `Saved Application Configuration (Target: ${HARNESS_LABELS[saved.target_harness].name}${saved.harness_locked ? " — Locked" : ""})`
+      );
+    } catch (err: unknown) {
+      notify(err instanceof Error ? err.message : "Failed to save application configuration", "err");
+    }
+  };
 
   const handleSelectBlueprint = async (id: string) => {
     try {
@@ -1322,19 +1411,53 @@ export default function App() {
 
         {/* Quick Run Toolbar */}
         <div className="flex items-center gap-2">
-          <select
-            value={runHarness}
-            onChange={(e) => {
-              const nextH = e.target.value as HarnessType;
-              setRunHarness(nextH);
-              setPreviewHarness(nextH);
-            }}
-            className="bg-slate-950 border border-indigo-500/70 rounded-lg px-2.5 py-1.5 text-xs text-cyan-300 font-semibold"
-          >
-            <option value="claude_code">Target: Claude Code</option>
-            <option value="antigravity">Target: Antigravity (AGY)</option>
-            <option value="opencode">Target: OpenCode</option>
-          </select>
+          <div className="flex items-center gap-1">
+            <select
+              value={runHarness}
+              disabled={Boolean(appConfig?.harness_locked)}
+              onChange={(e) => handleSelectTargetHarness(e.target.value as HarnessType)}
+              title={
+                appConfig?.harness_locked
+                  ? `Target harness is locked to ${HARNESS_LABELS[runHarness].name}. Click the lock button to unlock.`
+                  : "Select session target harness"
+              }
+              className={`bg-slate-950 border rounded-lg px-2.5 py-1.5 text-xs font-semibold ${
+                appConfig?.harness_locked
+                  ? "border-amber-500/70 text-amber-300 opacity-90 cursor-not-allowed"
+                  : "border-indigo-500/70 text-cyan-300"
+              }`}
+            >
+              <option value="claude_code">Target: Claude Code</option>
+              <option value="antigravity">Target: Antigravity (AGY)</option>
+              <option value="opencode">Target: OpenCode</option>
+            </select>
+            <button
+              onClick={handleToggleHarnessLock}
+              className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                appConfig?.harness_locked
+                  ? "bg-amber-950/80 border-amber-600/70 text-amber-300 hover:bg-amber-900/70"
+                  : "bg-slate-950 border-slate-700 text-slate-400 hover:text-white hover:border-slate-500"
+              }`}
+              title={
+                appConfig?.harness_locked
+                  ? `Harness LOCKED to ${HARNESS_LABELS[runHarness].name} — click to unlock`
+                  : "Lock target harness so it cannot change accidentally"
+              }
+            >
+              {appConfig?.harness_locked ? (
+                <Lock className="w-3.5 h-3.5" />
+              ) : (
+                <Unlock className="w-3.5 h-3.5" />
+              )}
+            </button>
+            <button
+              onClick={openAppSettingsModal}
+              className="p-1.5 rounded-lg bg-slate-950 border border-slate-700 hover:border-indigo-500 text-slate-300 hover:text-white transition-colors cursor-pointer"
+              title="Application Configuration (Target Harness Lock & Per-Provider Token Pricing)"
+            >
+              <Settings className="w-3.5 h-3.5" />
+            </button>
+          </div>
           <button
             onClick={handleStartRun}
             disabled={isRunBlocking || !selectedBlueprint || !selectedTask}
@@ -3848,21 +3971,31 @@ export default function App() {
               {studioRightPanel === "compiled" && (
                 <div className="flex-1 flex flex-col p-3 overflow-y-auto space-y-3 text-xs">
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {(["claude_code", "antigravity", "opencode"] as HarnessType[]).map((h) => (
-                      <button
-                        key={h}
-                        onClick={() => {
-                          setPreviewHarness(h);
-                          setRunHarness(h);
-                        }}
-                        className={`flex-1 py-1.5 px-2 rounded-lg font-medium border text-[11px] cursor-pointer ${previewHarness === h
-                          ? "bg-indigo-600/25 border-indigo-500 text-white"
-                          : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200"
+                    {(["claude_code", "antigravity", "opencode"] as HarnessType[]).map((h) => {
+                      const lockedOther = Boolean(appConfig?.harness_locked && h !== runHarness);
+                      return (
+                        <button
+                          key={h}
+                          disabled={lockedOther}
+                          onClick={() => handleSelectTargetHarness(h)}
+                          title={
+                            lockedOther
+                              ? `Locked to ${HARNESS_LABELS[runHarness].name} — unlock in header or Settings`
+                              : `Switch target harness to ${HARNESS_LABELS[h].name}`
+                          }
+                          className={`flex-1 py-1.5 px-2 rounded-lg font-medium border text-[11px] ${
+                            lockedOther
+                              ? "bg-slate-950/40 border-slate-800/50 text-slate-600 cursor-not-allowed"
+                              : previewHarness === h
+                                ? "bg-indigo-600/25 border-indigo-500 text-white cursor-pointer"
+                                : "bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200 cursor-pointer"
                           }`}
-                      >
-                        {HARNESS_LABELS[h].name}
-                      </button>
-                    ))}
+                        >
+                          {HARNESS_LABELS[h].name}
+                          {appConfig?.harness_locked && h === runHarness ? " 🔒" : ""}
+                        </button>
+                      );
+                    })}
                   </div>
 
                   {compiledResult && (
@@ -4910,11 +5043,16 @@ export default function App() {
                 </div>
 
                 <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">Target Coding Harness</label>
+                  <label className="block text-[11px] text-slate-400 mb-1">
+                    Target Coding Harness{" "}
+                    {appConfig?.harness_locked && (
+                      <span className="text-amber-300 font-semibold">(Locked)</span>
+                    )}
+                  </label>
                   <select
                     value={runHarness}
-                    disabled={isRunBlocking}
-                    onChange={(e) => setRunHarness(e.target.value as HarnessType)}
+                    disabled={isRunBlocking || Boolean(appConfig?.harness_locked)}
+                    onChange={(e) => handleSelectTargetHarness(e.target.value as HarnessType)}
                     className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <option value="claude_code">
@@ -5962,6 +6100,356 @@ export default function App() {
           </div>
         )}
       </main>
+
+      {/* Application Configuration Modal (Target Harness Lock & Per-Provider Token Pricing) */}
+      {showAppSettingsModal && appConfigDraft && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl max-h-[90vh] flex flex-col rounded-2xl bg-slate-900 border border-indigo-700/60 shadow-2xl text-xs overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between shrink-0">
+              <div>
+                <div className="text-sm font-bold text-white flex items-center gap-2">
+                  <Settings className="w-4 h-4 text-indigo-400" />
+                  Application Configuration
+                </div>
+                <div className="text-[11px] text-slate-400 mt-0.5">
+                  Lock your session target harness and configure token costs (USD per 1M tokens) per LLM provider, tier, and model ID.
+                </div>
+              </div>
+              <button
+                onClick={() => setShowAppSettingsModal(false)}
+                className="text-slate-400 hover:text-white text-sm px-2 py-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-5 overflow-y-auto space-y-5 flex-1">
+              {/* Section 1: Target Harness & Lock */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="text-xs font-bold uppercase tracking-wider text-indigo-300">
+                  1. Target Harness Application &amp; Session Lock
+                </div>
+                <div className="grid grid-cols-2 gap-3 items-end">
+                  <div>
+                    <label className="block text-[11px] text-slate-400 mb-1">Session Target Harness</label>
+                    <select
+                      value={appConfigDraft.target_harness}
+                      onChange={(e) =>
+                        setAppConfigDraft({
+                          ...appConfigDraft,
+                          target_harness: e.target.value as HarnessType,
+                        })
+                      }
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-cyan-300 font-semibold"
+                    >
+                      <option value="claude_code">Claude Code (CLAUDE.md + .claude/)</option>
+                      <option value="antigravity">Antigravity (GEMINI.md + .agents/)</option>
+                      <option value="opencode">OpenCode (AGENTS.md + opencode.json)</option>
+                    </select>
+                  </div>
+                  <label className="flex items-center gap-2.5 p-2 rounded-lg bg-slate-900 border border-slate-800 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={appConfigDraft.harness_locked}
+                      onChange={(e) =>
+                        setAppConfigDraft({
+                          ...appConfigDraft,
+                          harness_locked: e.target.checked,
+                        })
+                      }
+                      className="accent-amber-500"
+                    />
+                    <div>
+                      <div className="font-semibold text-white flex items-center gap-1">
+                        {appConfigDraft.harness_locked ? (
+                          <Lock className="w-3 h-3 text-amber-400" />
+                        ) : (
+                          <Unlock className="w-3 h-3 text-slate-400" />
+                        )}
+                        Lock Target Harness
+                      </div>
+                      <div className="text-[10px] text-slate-400">
+                        Prevents accidental switching across all tabs until unlocked.
+                      </div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Section 2: Per-Provider Token Pricing */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
+                  <div className="text-xs font-bold uppercase tracking-wider text-emerald-300">
+                    2. Token Cost Configuration (USD per 1M Tokens) — Per LLM Provider
+                  </div>
+                  <button
+                    onClick={async () => {
+                      const resetCfg = await api.resetTokenPricing();
+                      setAppConfig(resetCfg);
+                      setAppConfigDraft((prev) =>
+                        prev ? { ...prev, token_pricing: resetCfg.token_pricing } : resetCfg
+                      );
+                      notify("Reset token pricing to default per-provider rates.");
+                    }}
+                    className="px-2.5 py-1 rounded-md bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-[10px] font-semibold cursor-pointer"
+                  >
+                    Reset Pricing to Defaults
+                  </button>
+                </div>
+
+                {/* Provider Tabs + Add Provider */}
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {Object.keys(appConfigDraft.token_pricing.providers || {}).map((provId) => (
+                    <button
+                      key={provId}
+                      onClick={() => setPricingProviderTab(provId)}
+                      className={`px-2.5 py-1 rounded-lg font-mono text-[11px] border capitalize cursor-pointer ${
+                        pricingProviderTab === provId
+                          ? "bg-emerald-950/80 border-emerald-500 text-emerald-200 font-semibold"
+                          : "bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      {provId}
+                    </button>
+                  ))}
+                  <div className="flex items-center gap-1 ml-auto">
+                    <input
+                      value={newPricingProviderId}
+                      onChange={(e) => setNewPricingProviderId(e.target.value)}
+                      placeholder="Add provider (e.g. enterprise-llm)"
+                      className="bg-slate-900 border border-slate-800 rounded-md px-2 py-1 font-mono text-[10px] w-44"
+                    />
+                    <button
+                      onClick={() => {
+                        const pid = newPricingProviderId.trim().toLowerCase().replace(/\s+/g, "-");
+                        if (!pid) return;
+                        if (appConfigDraft.token_pricing.providers[pid]) {
+                          setPricingProviderTab(pid);
+                          setNewPricingProviderId("");
+                          return;
+                        }
+                        const defaultRate = { input_per_1m: 2.0, output_per_1m: 8.0, cache_read_per_1m: 0.2 };
+                        setAppConfigDraft({
+                          ...appConfigDraft,
+                          token_pricing: {
+                            ...appConfigDraft.token_pricing,
+                            providers: {
+                              ...appConfigDraft.token_pricing.providers,
+                              [pid]: {
+                                default: { ...defaultRate },
+                                reasoning: { input_per_1m: 10.0, output_per_1m: 40.0, cache_read_per_1m: 1.0 },
+                                coding: { ...defaultRate },
+                                fast: { input_per_1m: 0.5, output_per_1m: 2.0, cache_read_per_1m: 0.05 },
+                                free: { input_per_1m: 0.0, output_per_1m: 0.0, cache_read_per_1m: 0.0 },
+                              },
+                            },
+                          },
+                        });
+                        setPricingProviderTab(pid);
+                        setNewPricingProviderId("");
+                      }}
+                      className="px-2 py-1 rounded-md bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-semibold cursor-pointer"
+                    >
+                      + Add
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tier Pricing Table for Active Provider */}
+                {appConfigDraft.token_pricing.providers[pricingProviderTab] && (
+                  <div className="rounded-lg border border-slate-800 overflow-hidden">
+                    <table className="w-full text-left border-collapse">
+                      <thead className="bg-slate-900 text-[10px] uppercase text-slate-400">
+                        <tr>
+                          <th className="px-3 py-2">Model Tier</th>
+                          <th className="px-3 py-2">Input ($ / 1M tok)</th>
+                          <th className="px-3 py-2">Output ($ / 1M tok)</th>
+                          <th className="px-3 py-2">Cache Read ($ / 1M tok)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-800/80">
+                        {(["default", "reasoning", "coding", "fast", "free"] as const).map((tierKey) => {
+                          const rate = appConfigDraft.token_pricing.providers[pricingProviderTab][tierKey] || {
+                            input_per_1m: 0,
+                            output_per_1m: 0,
+                            cache_read_per_1m: 0,
+                          };
+                          const updateTierField = (field: "input_per_1m" | "output_per_1m" | "cache_read_per_1m", rawVal: string) => {
+                            const num = Math.max(0, Number(rawVal) || 0);
+                            setAppConfigDraft({
+                              ...appConfigDraft,
+                              token_pricing: {
+                                ...appConfigDraft.token_pricing,
+                                providers: {
+                                  ...appConfigDraft.token_pricing.providers,
+                                  [pricingProviderTab]: {
+                                    ...appConfigDraft.token_pricing.providers[pricingProviderTab],
+                                    [tierKey]: { ...rate, [field]: num },
+                                  },
+                                },
+                              },
+                            });
+                          };
+                          return (
+                            <tr key={tierKey} className="bg-slate-950/60">
+                              <td className="px-3 py-1.5 font-mono text-cyan-300 font-semibold">{tierKey}</td>
+                              <td className="px-3 py-1.5">
+                                <input
+                                  type="number"
+                                  step="0.05"
+                                  min="0"
+                                  value={rate.input_per_1m}
+                                  onChange={(e) => updateTierField("input_per_1m", e.target.value)}
+                                  className="w-24 bg-slate-900 border border-slate-800 rounded px-2 py-1 font-mono text-[11px] text-white"
+                                />
+                              </td>
+                              <td className="px-3 py-1.5">
+                                <input
+                                  type="number"
+                                  step="0.05"
+                                  min="0"
+                                  value={rate.output_per_1m}
+                                  onChange={(e) => updateTierField("output_per_1m", e.target.value)}
+                                  className="w-24 bg-slate-900 border border-slate-800 rounded px-2 py-1 font-mono text-[11px] text-white"
+                                />
+                              </td>
+                              <td className="px-3 py-1.5">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  min="0"
+                                  value={rate.cache_read_per_1m}
+                                  onChange={(e) => updateTierField("cache_read_per_1m", e.target.value)}
+                                  className="w-24 bg-slate-900 border border-slate-800 rounded px-2 py-1 font-mono text-[11px] text-white"
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Per-Model Exact Overrides */}
+                <div className="pt-2 border-t border-slate-800 space-y-2">
+                  <div className="text-[11px] font-semibold text-slate-300">
+                    Exact Per-Model ID Overrides (Optional — takes precedence over provider/tier rates)
+                  </div>
+                  {Object.entries(appConfigDraft.token_pricing.model_overrides || {}).length > 0 && (
+                    <div className="space-y-1">
+                      {Object.entries(appConfigDraft.token_pricing.model_overrides).map(([mid, r]) => (
+                        <div
+                          key={mid}
+                          className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-slate-900 border border-slate-800 font-mono text-[11px]"
+                        >
+                          <span className="text-cyan-300 truncate">{mid}</span>
+                          <div className="flex items-center gap-3 text-slate-300 shrink-0">
+                            <span>In: ${r.input_per_1m}/1M</span>
+                            <span>Out: ${r.output_per_1m}/1M</span>
+                            <span>Cache: ${r.cache_read_per_1m}/1M</span>
+                            <button
+                              onClick={() => {
+                                const nextOv = { ...appConfigDraft.token_pricing.model_overrides };
+                                delete nextOv[mid];
+                                setAppConfigDraft({
+                                  ...appConfigDraft,
+                                  token_pricing: { ...appConfigDraft.token_pricing, model_overrides: nextOv },
+                                });
+                              }}
+                              className="text-slate-500 hover:text-rose-400 cursor-pointer"
+                              title="Remove override"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="grid grid-cols-6 gap-1.5 items-center">
+                    <input
+                      value={newOverrideModelId}
+                      onChange={(e) => setNewOverrideModelId(e.target.value)}
+                      placeholder="Model ID (e.g. claude-opus-4-20250514)"
+                      className="col-span-2 bg-slate-900 border border-slate-800 rounded px-2 py-1 font-mono text-[10px]"
+                    />
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0"
+                      value={newOverrideInput}
+                      onChange={(e) => setNewOverrideInput(e.target.value)}
+                      placeholder="In $/1M"
+                      className="bg-slate-900 border border-slate-800 rounded px-2 py-1 font-mono text-[10px]"
+                      title="Input $ per 1M tokens"
+                    />
+                    <input
+                      type="number"
+                      step="0.05"
+                      min="0"
+                      value={newOverrideOutput}
+                      onChange={(e) => setNewOverrideOutput(e.target.value)}
+                      placeholder="Out $/1M"
+                      className="bg-slate-900 border border-slate-800 rounded px-2 py-1 font-mono text-[10px]"
+                      title="Output $ per 1M tokens"
+                    />
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={newOverrideCache}
+                      onChange={(e) => setNewOverrideCache(e.target.value)}
+                      placeholder="Cache $/1M"
+                      className="bg-slate-900 border border-slate-800 rounded px-2 py-1 font-mono text-[10px]"
+                      title="Cache Read $ per 1M tokens"
+                    />
+                    <button
+                      onClick={() => {
+                        const mid = newOverrideModelId.trim();
+                        if (!mid) return;
+                        setAppConfigDraft({
+                          ...appConfigDraft,
+                          token_pricing: {
+                            ...appConfigDraft.token_pricing,
+                            model_overrides: {
+                              ...appConfigDraft.token_pricing.model_overrides,
+                              [mid]: {
+                                input_per_1m: Math.max(0, Number(newOverrideInput) || 0),
+                                output_per_1m: Math.max(0, Number(newOverrideOutput) || 0),
+                                cache_read_per_1m: Math.max(0, Number(newOverrideCache) || 0),
+                              },
+                            },
+                          },
+                        });
+                        setNewOverrideModelId("");
+                      }}
+                      className="px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600 text-white font-semibold text-[10px] cursor-pointer"
+                    >
+                      + Override
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-3.5 border-t border-slate-800 flex items-center justify-end gap-2 shrink-0 bg-slate-900/90">
+              <button
+                onClick={() => setShowAppSettingsModal(false)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveAppSettingsModal}
+                className="px-4 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-semibold cursor-pointer"
+              >
+                Save Configuration
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Save / Save-As Blueprint Modal */}
       {showSaveBlueprintModal && selectedBlueprint && (

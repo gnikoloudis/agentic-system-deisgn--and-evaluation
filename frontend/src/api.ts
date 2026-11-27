@@ -3,6 +3,7 @@ import type {
   ActiveRunStatusResponse,
   AdvisorSuggestion,
   AgentArchitecture,
+  AppUserConfig,
   ClearStaleRunsResponse,
   CompilationResult,
   EvaluationReport,
@@ -30,6 +31,17 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  getAppConfig: () => request<AppUserConfig>("/config"),
+  updateAppConfig: (cfg: AppUserConfig) =>
+    request<AppUserConfig>("/config", {
+      method: "PUT",
+      body: JSON.stringify(cfg),
+    }),
+  resetTokenPricing: () =>
+    request<AppUserConfig>("/config/reset-pricing", {
+      method: "POST",
+    }),
+
   listBlueprints: () => request<AgentArchitecture[]>("/blueprints"),
   getBlueprint: (id: string) =>
     request<{ blueprint: AgentArchitecture; raw_yaml: string; file_path: string }>(`/blueprints/${id}`),

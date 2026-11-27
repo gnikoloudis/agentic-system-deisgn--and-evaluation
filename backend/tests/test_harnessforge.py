@@ -766,7 +766,7 @@ def test_issue_6_workflow_handoff_edges_normalization_and_compilation():
 def test_generated_agent_files_match_canvas_details_and_omit_tba_for_non_tba():
     """Verify Generated Agent & Configuration Files include complete canvas agent details across all 3 harnesses
     and do NOT emit TBA-only commands for non-TBA blueprints."""
-    sdlc_tuple = get_blueprint("planner-coder-verifier-custom")
+    sdlc_tuple = get_blueprint("planner-coder-verifier")
     assert sdlc_tuple is not None
     sdlc_bp = sdlc_tuple[0].model_copy(deep=True)
     sdlc_bp.orchestrator.id = "sdlc_lead"
@@ -960,6 +960,49 @@ def test_auto_project_verifiers_and_local_venv_detection(client: TestClient, tmp
         assert ordered[0].id == "deploy-recent-eval-order-test"
     finally:
         client.delete("/api/runs/deploy-recent-eval-order-test")
+
+
+def test_app_config_harness_lock_and_per_provider_token_pricing(client: TestClient):
+    """Verify /api/config persists target_harness, harness_locked, and per-provider/tier & per-model token pricing."""
+    from app.runner.transcript_parsers import estimate_cost_usd
+
+    orig_cfg = client.get("/api/config").json()
+    try:
+        updated = json.loads(json.dumps(orig_cfg))
+        updated["target_harness"] = "antigravity"
+        updated["harness_locked"] = True
+        updated["token_pricing"]["providers"]["google"]["reasoning"] = {
+            "input_per_1m": 20.0,
+            "output_per_1m": 80.0,
+            "cache_read_per_1m": 2.0,
+        }
+        updated["token_pricing"]["model_overrides"]["enterprise-llm/my-model"] = {
+            "input_per_1m": 1.0,
+            "output_per_1m": 4.0,
+            "cache_read_per_1m": 0.1,
+        }
+
+        put_resp = client.put("/api/config", json=updated)
+        assert put_resp.status_code == 200
+        saved = put_resp.json()
+        assert saved["target_harness"] == "antigravity"
+        assert saved["harness_locked"] is True
+
+        # Verify estimate_cost_usd uses the custom Google reasoning rate (20 / 80 / 2 per 1M)
+        google_cost = estimate_cost_usd(500_000, 250_000, 100_000, model="gemini-4-neon-high")
+        assert google_cost == round(0.5 * 20.0 + 0.25 * 80.0 + 0.1 * 2.0, 6)
+
+        # Verify exact model override takes precedence
+        override_cost = estimate_cost_usd(1_000_000, 500_000, 0, model="enterprise-llm/my-model")
+        assert override_cost == round(1.0 * 1.0 + 0.5 * 4.0, 6)
+
+        # Reset pricing preserves harness lock while restoring default rates
+        reset_resp = client.post("/api/config/reset-pricing")
+        assert reset_resp.status_code == 200
+        assert reset_resp.json()["harness_locked"] is True
+        assert reset_resp.json()["token_pricing"]["model_overrides"] == {}
+    finally:
+        client.put("/api/config", json=orig_cfg)
 
 
 
