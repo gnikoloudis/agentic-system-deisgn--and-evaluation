@@ -428,7 +428,7 @@ def test_issue_1_orphan_guardrail_removal_and_issue_2_agent_id_rename(tmp_path: 
     assert ".opencode/agent/pm_meeting_orchestrator.md" in {f.relative_path for f in oc.files}
     assert ".opencode/agent/meeting_analyst.md" in {f.relative_path for f in oc.files}
     assert ".claude/agents/meeting_analyst.md" in {f.relative_path for f in cc.files}
-    assert ".agents/agents/meeting_analyst.md" in {f.relative_path for f in ag.files}
+    assert f".agents/plugins/{bp.metadata.id}/agents/meeting_analyst.md" in {f.relative_path for f in ag.files}
 
     # Verify hook_runner.py enforces allow_write=False under the renamed orchestrator ID `pm_meeting_orchestrator`
     for cf in cc.files:

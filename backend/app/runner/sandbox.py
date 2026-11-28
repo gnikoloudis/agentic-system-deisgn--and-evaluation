@@ -50,8 +50,15 @@ def resolve_workspace_source(workspace_source: str) -> Path:
 
 
 def is_git_repo(path: Path) -> bool:
-    res = _run_git(["rev-parse", "--is-inside-work-tree"], cwd=path)
-    return res.returncode == 0 and res.stdout.strip() == "true"
+    if not (path / ".git").exists():
+        return False
+    res = _run_git(["rev-parse", "--show-toplevel"], cwd=path)
+    if res.returncode != 0:
+        return False
+    try:
+        return Path(res.stdout.strip()).resolve() == path.resolve()
+    except Exception:
+        return False
 
 
 def create_isolated_sandbox(
