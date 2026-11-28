@@ -126,6 +126,64 @@ harnessforge compile technical-business-analyst --harness antigravity --output "
 
 # Run a benchmark task in an isolated sandbox and generate a 4-layer evaluation report
 harnessforge run planner-coder-verifier bugfix-auth-token --harness claude_code
+
+# Inspect available MCP servers (built-in presets and host-detected)
+harnessforge mcp list
+
+# Start the FastMCP Server (stdio default or SSE)
+harnessforge mcp start --transport stdio
+```
+
+---
+
+## Model Context Protocol (MCP) Support
+
+HarnessForge exposes its full multi-agent design, compilation, deployment, benchmark creation, evaluation, and AI Advisor capabilities directly to external AI coding harnesses (**Antigravity**, **Claude Code**, **OpenCode**, **Cursor**) via the **Model Context Protocol (MCP)**.
+
+### Exposed MCP Tools
+
+1. **`list_mcp_catalog`**: Returns auto-detected host MCP servers (`mcp.json`, etc.) alongside built-in presets (`sqlite`, `yahoofinance`, `code-graph`, `stitch`, `postgres`, `github`, `playwright`, `filesystem`).
+2. **`describe_and_build_system`**: Translates a plain-English description of an agentic system into a fully validated `AgentArchitecture` blueprint with assigned subagents, topology routing, and least-privilege MCP bindings.
+3. **`validate_and_save_blueprint`**: Commits and validates an architecture YAML blueprint to persistent storage.
+4. **`compile_and_deploy_system`**: Compiles an architecture for `antigravity`, `claude_code`, or `opencode` and deploys native configuration files (prompts, skills, rules, hooks, and `mcp.json`) directly into the target project workspace.
+5. **`create_benchmark_task`**: Authors an evaluation benchmark task with deterministic verifiers (pytest, file presence, regex assertions, BA/INVEST checks) and LLM judge rubrics.
+6. **`run_benchmark_task`**: Launches an automated benchmark execution run in an isolated sandbox or workspace.
+7. **`evaluate_workspace_deliverables`**: Computes the 4-layer scorecard (deterministic verifiers, trajectory adherence, judge rating) on deliverables generated in a workspace.
+8. **`get_advisor_recommendations`**: Generates AI Architecture Advisor diagnostic findings and `v2` YAML diff upgrades.
+9. **`inspect_blueprint`**: Reads full YAML and metadata for an existing architecture.
+10. **`list_blueprints_and_tasks`**: Lists all available blueprints and benchmark tasks in the repository.
+
+### MCP Configuration
+
+To add HarnessForge to your harness (e.g. `mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "harnessforge": {
+      "command": "python",
+      "args": ["-m", "app.mcp.server"],
+      "env": {
+        "PYTHONPATH": "D:/Python_Projects/Harness Evaluation Tool/backend"
+      }
+    }
+  }
+}
+```
+
+### End-to-End Demos
+
+Three runnable end-to-end demos showcase the complete MCP lifecycle:
+
+```bash
+# Demo 1: Financial Analysis & News Correlation using SQLite and YahooFinance MCPs
+python demos/demo_1_financial_analysis.py
+
+# Demo 2: Complete TDD System (User Story to Tests First, then Implementation & Pytest)
+python demos/demo_2_tdd_pipeline.py
+
+# Demo 3: Security & Bugfix Triage using Code-Graph AST Analysis and Pytest Verifiers
+python demos/demo_3_security_triage.py
 ```
 
 ---

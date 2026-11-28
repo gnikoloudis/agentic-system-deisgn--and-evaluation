@@ -1,0 +1,45 @@
+api_version: harnessforge/v1
+kind: TaskSpec
+id: tdd-user-story-implementation
+name: TDD User Story to Test Suite & Implementation Benchmark
+category: bugfix
+difficulty: medium
+description: Evaluates multi-agent TDD team receiving user story and writing tests first.
+prompt: Read USER_STORIES.md, author tests in tests/test_service.py, implement service.py, run pytest.
+workspace_source: tasks/sample_repos/tdd_calculator_service
+base_commit: null
+expected_subagents: []
+verifiers:
+- id: check_test_file_exists
+  name: TDD Test Suite Authored
+  type: file_exists
+  command: null
+  target_path: tests/test_service.py
+  pattern: null
+  max_lines: null
+  weight: 2.0
+  required: true
+  timeout_seconds: 60
+- id: check_service_impl_exists
+  name: Production Service Implemented
+  type: file_exists
+  command: null
+  target_path: service.py
+  pattern: null
+  max_lines: null
+  weight: 2.0
+  required: true
+  timeout_seconds: 60
+- id: check_pytest_all_pass
+  name: Full Pytest Suite Passes
+  type: pytest_pass
+  command: pytest -v tests/test_service.py
+  target_path: null
+  pattern: null
+  max_lines: null
+  weight: 4.0
+  required: true
+  timeout_seconds: 60
+rubric: []
+tags: []
+env_vars: {}

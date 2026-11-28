@@ -366,6 +366,13 @@ class AntigravityAdapter(HarnessAdapter):
                     description="Antigravity MCP server configuration",
                 )
             )
+            files.append(
+                CompiledFile(
+                    relative_path="mcp.json",
+                    content=json.dumps(mcp_payload, indent=2),
+                    description="Root mcp.json configuration",
+                )
+            )
 
         # 6. Runtime topology state machine & telemetry emitter -> both `.harness-eval/*` (workspace root)
         # AND `.agents/.harness-eval/*` (since Antigravity executes `.agents/hooks.json` with CWD = `.agents/`)

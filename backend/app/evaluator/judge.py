@@ -154,7 +154,7 @@ def evaluate_with_judge(
         if dim_scores:
             total_w = sum(d.weight for d in dim_scores) or 1.0
             weighted_avg_1_5 = sum(d.score * d.weight for d in dim_scores) / total_w
-            overall_pct = round(((weighted_avg_1_5 - 1.0) / 4.0) * 100.0, 2)
+            overall_pct = max(0.0, min(100.0, round(((weighted_avg_1_5 - 1.0) / 4.0) * 100.0, 2)))
             return JudgeEvaluation(
                 provider_used=provider_used,
                 model_used=model_used,
@@ -221,7 +221,7 @@ def evaluate_with_judge(
 
     total_w = sum(d.weight for d in dim_scores) or 1.0
     weighted_avg_1_5 = sum(d.score * d.weight for d in dim_scores) / total_w
-    overall_pct = round(((weighted_avg_1_5 - 1.0) / 4.0) * 100.0, 2)
+    overall_pct = max(0.0, min(100.0, round(((weighted_avg_1_5 - 1.0) / 4.0) * 100.0, 2)))
 
     strengths: List[str] = []
     weaknesses: List[str] = []

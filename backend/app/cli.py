@@ -186,5 +186,41 @@ def cmd_evaluate_dir(
         console.print(f"    [cyan]-> Recommendation:[/cyan] {d.recommendation}")
 
 
+mcp_app = typer.Typer(help="Model Context Protocol (MCP) server & catalog commands")
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.command("start")
+def cmd_mcp_start(
+    transport: str = typer.Option("stdio", "--transport", "-t", help="stdio | sse"),
+    port: int = typer.Option(8766, "--port", "-p", help="Port for SSE server"),
+) -> None:
+    """Start the HarnessForge FastMCP server."""
+    from app.mcp.server import mcp_server
+
+    init_db()
+    if transport != "stdio":
+        console.print(f"[bold cyan]Starting HarnessForge MCP Server ({transport}) on port {port}...[/bold cyan]")
+    mcp_server.run(transport=transport)  # type: ignore
+
+
+@mcp_app.command("list")
+def cmd_mcp_list() -> None:
+    """List available MCP presets and host-detected servers."""
+    from app.mcp.catalog import get_all_available_mcp_servers
+
+    init_db()
+    servers = get_all_available_mcp_servers()
+    table = Table(title="Available MCP Servers (Presets + Host Detected)")
+    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("Transport", style="magenta")
+    table.add_column("Command / Target")
+    table.add_column("Description")
+    for s in servers:
+        cmd_str = f"{s.command} {' '.join(s.args)}".strip() if s.command else (s.url or "-")
+        table.add_row(s.id, s.transport, cmd_str, s.description)
+    console.print(table)
+
+
 if __name__ == "__main__":
     app()

@@ -1,0 +1,274 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: financial-market-news-analyst
+  name: Financial Market & News Correlation Analyst Team
+  version: 1.0.0
+  description: Financial market correlation team using sqlite and yahoofinance MCPs to analyze historical
+    stock prices and news events.
+  tags:
+  - antigravity
+  - mcp
+  - generator-verifier-loop
+  author: HarnessForge User
+orchestrator:
+  id: financial_market_news_analyst_orchestrator
+  name: Financial Market & News Correlation Analyst Team Lead Orchestrator
+  role: Leads and coordinates the Financial Market & News Correlation Analyst Team pipeline across subagents.
+  model: default
+  harness_models:
+    antigravity: gemini-4-argon-medium
+  system_prompt: 'You are the Lead Orchestrator for Financial Market & News Correlation Analyst Team.
+
+    Description: Financial market correlation team using sqlite and yahoofinance MCPs to analyze historical
+    stock prices and news events.
+
+    Delegate in strict sequence to your specialist subagents:
+
+    1. Delegate to `market_data_collector`: Uses yahoofinance and sqlite MCPs to fetch ticker history,
+    earnings reports, and historical news.
+
+    2. Delegate to `correlation_analyst`: Correlates historical price movements with news sentiment and
+    macro events, storing findings in SQLite.
+
+    3. Delegate to `report_qa_auditor`: Verifies calculations, source citations, and outputs against deterministic
+    accuracy checks.
+
+    Ensure all deliverables pass verification checks before declaring completion.'
+  tools:
+  - read
+  - grep
+  - glob
+  - subagent
+  mcp_servers:
+  - sqlite
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  budgets:
+    max_turns: 40
+    max_cost_usd: 3.0
+    timeout_seconds: 600
+    context_compaction_threshold_pct: 80
+subagents:
+- id: market_data_collector
+  name: Market Data & News Ingestion Analyst
+  role: Uses yahoofinance and sqlite MCPs to fetch ticker history, earnings reports, and historical news.
+  model: coding
+  harness_models:
+    antigravity: gemini-4-argon-high
+  system_prompt: Fetch stock price history, company metrics, and recent news articles via Yahoo Finance
+    and SQLite MCP tools. Never fabricate financial data.
+  tools:
+  - read
+  - grep
+  - glob
+  mcp_servers:
+  - sqlite
+  - yahoofinance
+  permissions:
+    allow_shell: false
+    allow_write: true
+    allow_network: true
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 15
+- id: correlation_analyst
+  name: Financial Correlation & Anomaly Analyst
+  role: Correlates historical price movements with news sentiment and macro events, storing findings in
+    SQLite.
+  model: reasoning
+  harness_models:
+    antigravity: gemini-4-neon-high
+  system_prompt: Analyze ingested financial data for anomalies and correlations with published news. Formulate
+    structured insight tables and charts.
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  mcp_servers:
+  - sqlite
+  permissions:
+    allow_shell: false
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 20
+- id: report_qa_auditor
+  name: Financial Report QA & Verification Auditor
+  role: Verifies calculations, source citations, and outputs against deterministic accuracy checks.
+  model: reasoning
+  harness_models:
+    antigravity: gemini-4-neon-high
+  system_prompt: Audit all generated financial findings. Verify numbers against SQLite queries and confirm
+    zero hallucinated tickers.
+  tools:
+  - read
+  - bash
+  mcp_servers:
+  - sqlite
+  permissions:
+    allow_shell: true
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 12
+- id: finacial_reporter
+  name: Financial reporter
+  role: Creates a financial report with the trades performance
+  model: coding
+  harness_models: {}
+  system_prompt: You are a financial reporter that based on the data analysed create a financial report
+    on the Profit and Loss trades outcome.
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  - bash
+  mcp_servers: []
+  permissions:
+    allow_shell: true
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+  max_turns: 15
+- id: strategy_recomender
+  name: Strategy recommender
+  role: After the analysis and reporting the agent proposes a strategy for the trading system
+  model: coding
+  harness_models: {}
+  system_prompt: 'After fiancial_reporter completes the analysis report as a trading Strategists you are
+    going provide imprvements in the strategy considering the trading Asset Class,Risk %, Min R:R, SL,
+    ATR. '
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  - bash
+  mcp_servers: []
+  permissions:
+    allow_shell: true
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+  max_turns: 15
+skills: []
+commands: []
+hooks: []
+mcp_servers:
+- id: sqlite
+  description: SQLite Database Explorer & Query Engine. Allows running SQL queries, reading schemas, and
+    analyzing structured data.
+  transport: stdio
+  command: uvx
+  args:
+  - mcp-server-sqlite
+  - --db-path
+  - '"D:\Python_Projects\EasyMoney\easymoney_trader.db"'
+  url: null
+  env: {}
+- id: yahoofinance
+  description: Yahoo Finance Market & News Ingestion. Fetches historical stock prices, market metrics,
+    corporate actions, and financial news.
+  transport: stdio
+  command: python
+  args:
+  - -m
+  - yfinance_mcp_server
+  url: null
+  env: {}
+topology:
+  pattern: generator-verifier-loop
+  enforcement_mode: dual
+  entry_node: root_orchestrator
+  edges:
+  - id: edge_orch_to_market_data_collector
+    source: financial_market_news_analyst_orchestrator
+    target: market_data_collector
+    condition: 'Step 1: Ingest and analyze domain requirements'
+    order: 1
+    required: true
+    max_loops: 1
+  - id: edge_market_data_collector_to_correlation_analyst
+    source: market_data_collector
+    target: correlation_analyst
+    condition: 'Step 2: Handoff to Financial Correlation & Anomaly Analyst'
+    order: 2
+    required: true
+    max_loops: 1
+  - id: edge_correlation_analyst_to_report_qa_auditor
+    source: correlation_analyst
+    target: report_qa_auditor
+    condition: 'Step 3: Handoff to Financial Report QA & Verification Auditor'
+    order: 3
+    required: true
+    max_loops: 1
+  - id: edge_loopback_report_qa_auditor_to_correlation_analyst
+    source: report_qa_auditor
+    target: correlation_analyst
+    condition: 'Conditional: If verifier reports FAIL, loop back for revision (max 3 loops)'
+    order: 4
+    required: false
+    max_loops: 3
+  - id: e_specialist_4
+    source: financial_market_news_analyst_orchestrator
+    target: finacial_reporter
+    condition: 'Step 5: Delegate to specialist_4'
+    order: 5
+    required: true
+    max_loops: 1
+  - id: e_specialist_5
+    source: financial_market_news_analyst_orchestrator
+    target: strategy_recomender
+    condition: 'Step 6: Delegate to specialist_5'
+    order: 6
+    required: true
+    max_loops: 1
+visual_layout:
+  nodes:
+    financial_market_news_analyst_orchestrator:
+      x: 326.0
+      y: -158.0
+    report_qa_auditor:
+      x: 1185.0
+      y: 93.0
+    sqlite:
+      x: 448.0
+      y: 510.0
+    yahoofinance:
+      x: 61.0
+      y: 511.0
+    market_data_collector:
+      x: 41.0
+      y: 171.0
+    correlation_analyst:
+      x: 841.0
+      y: 136.0
+    finacial_reporter:
+      x: 782.0
+      y: 836.0
+    strategy_recomender:
+      x: 341.0
+      y: 861.0

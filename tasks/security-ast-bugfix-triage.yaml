@@ -1,0 +1,46 @@
+api_version: harnessforge/v1
+kind: TaskSpec
+id: security-ast-bugfix-triage
+name: Security AST Vulnerability Triage & Patch Benchmark
+category: bugfix
+difficulty: medium
+description: Evaluates security team using code-graph MCP for AST search and call-graph traversal to locate
+  and patch auth vulnerability.
+prompt: Inspect auth.py using code-graph. Patch timing leak and open redirect. Run pytest.
+workspace_source: tasks/sample_repos/vulnerable_auth_api
+base_commit: null
+expected_subagents: []
+verifiers:
+- id: check_secure_hmac_used
+  name: Constant-Time Comparison Implemented
+  type: file_contains_regex
+  command: null
+  target_path: auth.py
+  pattern: compare_digest
+  max_lines: null
+  weight: 2.0
+  required: true
+  timeout_seconds: 60
+- id: check_redirect_sanitized
+  name: Open Redirect Vulnerability Patched
+  type: file_contains_regex
+  command: null
+  target_path: auth.py
+  pattern: startswith
+  max_lines: null
+  weight: 2.0
+  required: true
+  timeout_seconds: 60
+- id: check_pytest_security_pass
+  name: Security Test Suite Passes
+  type: pytest_pass
+  command: pytest -v test_auth.py
+  target_path: null
+  pattern: null
+  max_lines: null
+  weight: 4.0
+  required: true
+  timeout_seconds: 60
+rubric: []
+tags: []
+env_vars: {}

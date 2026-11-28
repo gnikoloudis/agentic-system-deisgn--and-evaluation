@@ -1,0 +1,170 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: tdd-user-story-developer
+  name: TDD Multi-Agent System (User Story to Tests & Code)
+  version: 1.0.0
+  description: Complete TDD system that reads user stories, drafts failing tests first, develops implementation,
+    and runs pytest verification.
+  tags:
+  - claude_code
+  - mcp
+  - generator-verifier-loop
+  author: HarnessForge User
+orchestrator:
+  id: tdd_user_story_developer_orchestrator
+  name: TDD Multi-Agent System (User Story to Tests & Code) Lead Orchestrator
+  role: Leads and coordinates the TDD Multi-Agent System (User Story to Tests & Code) pipeline across
+    subagents.
+  model: default
+  harness_models:
+    claude_code: claude-3-5-sonnet-20241022
+  system_prompt: 'You are the Lead Orchestrator for TDD Multi-Agent System (User Story to Tests & Code).
+
+    Description: Complete TDD system that reads user stories, drafts failing tests first, develops implementation,
+    and runs pytest verification.
+
+    Delegate in strict sequence to your specialist subagents:
+
+    1. Delegate to `test_suite_author`: Reads user stories and acceptance criteria, then drafts comprehensive
+    pytest suites before implementation begins.
+
+    2. Delegate to `feature_developer`: Implements minimal clean code to make all test cases pass without
+    modifying the tests.
+
+    3. Delegate to `refactor_and_verifier`: Runs pytest suites, audits code coverage, refactors code for
+    cleanliness, and validates final pass verdict.
+
+    Ensure all deliverables pass verification checks before declaring completion.'
+  tools:
+  - read
+  - grep
+  - glob
+  - subagent
+  mcp_servers: []
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  budgets:
+    max_turns: 40
+    max_cost_usd: 3.0
+    timeout_seconds: 600
+    context_compaction_threshold_pct: 80
+subagents:
+- id: test_suite_author
+  name: TDD Test Suite Author (Red Phase)
+  role: Reads user stories and acceptance criteria, then drafts comprehensive pytest suites before implementation
+    begins.
+  model: coding
+  harness_models:
+    claude_code: claude-3-5-sonnet-20241022
+  system_prompt: Write comprehensive, failing unit and integration tests based on the user story acceptance
+    criteria. Strictly follow TDD Red Phase.
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  mcp_servers: []
+  permissions:
+    allow_shell: false
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 15
+- id: feature_developer
+  name: Feature Implementation Developer (Green Phase)
+  role: Implements minimal clean code to make all test cases pass without modifying the tests.
+  model: coding
+  harness_models:
+    claude_code: claude-3-5-sonnet-20241022
+  system_prompt: Implement the requested functions and classes to pass all authored tests. Do not touch
+    test files.
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  mcp_servers: []
+  permissions:
+    allow_shell: false
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 25
+- id: refactor_and_verifier
+  name: TDD Refactorer & Coverage Verifier (Refactor Phase)
+  role: Runs pytest suites, audits code coverage, refactors code for cleanliness, and validates final
+    pass verdict.
+  model: reasoning
+  harness_models:
+    claude_code: claude-3-5-sonnet-20241022
+  system_prompt: Run pytest -v inside the sandbox, verify 100% test pass rate and high coverage, and refactor
+    for maintainability.
+  tools:
+  - read
+  - write
+  - edit
+  - bash
+  mcp_servers: []
+  permissions:
+    allow_shell: true
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 15
+skills: []
+commands: []
+hooks: []
+mcp_servers: []
+topology:
+  pattern: generator-verifier-loop
+  enforcement_mode: dual
+  entry_node: root_orchestrator
+  edges:
+  - id: edge_orch_to_test_suite_author
+    source: tdd_user_story_developer_orchestrator
+    target: test_suite_author
+    condition: 'Step 1: Ingest and analyze domain requirements'
+    order: 1
+    required: true
+    max_loops: 1
+  - id: edge_test_suite_author_to_feature_developer
+    source: test_suite_author
+    target: feature_developer
+    condition: 'Step 2: Handoff to Feature Implementation Developer (Green Phase)'
+    order: 2
+    required: true
+    max_loops: 1
+  - id: edge_feature_developer_to_refactor_and_verifier
+    source: feature_developer
+    target: refactor_and_verifier
+    condition: 'Step 3: Handoff to TDD Refactorer & Coverage Verifier (Refactor Phase)'
+    order: 3
+    required: true
+    max_loops: 1
+  - id: edge_loopback_refactor_and_verifier_to_feature_developer
+    source: refactor_and_verifier
+    target: feature_developer
+    condition: 'Conditional: If verifier reports FAIL, loop back for revision (max 3 loops)'
+    order: 4
+    required: false
+    max_loops: 3
+visual_layout:
+  nodes: {}

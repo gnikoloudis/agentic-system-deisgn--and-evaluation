@@ -1,0 +1,181 @@
+api_version: harnessforge/v1
+kind: AgentArchitecture
+metadata:
+  id: security-bugfix-triage
+  name: Security & Bugfix Triage System (Code-Graph + AST + Pytest)
+  version: 1.0.0
+  description: Security bugfix triage team using code-graph MCP to inspect AST nodes, identify vulnerable
+    code paths, and patch issues.
+  tags:
+  - opencode
+  - mcp
+  - generator-verifier-loop
+  author: HarnessForge User
+orchestrator:
+  id: security_bugfix_triage_orchestrator
+  name: Security & Bugfix Triage System (Code-Graph + AST + Pytest) Lead Orchestrator
+  role: Leads and coordinates the Security & Bugfix Triage System (Code-Graph + AST + Pytest) pipeline
+    across subagents.
+  model: default
+  harness_models:
+    opencode: deepseek-v4.1-flash-free
+  system_prompt: 'You are the Lead Orchestrator for Security & Bugfix Triage System (Code-Graph + AST
+    + Pytest).
+
+    Description: Security bugfix triage team using code-graph MCP to inspect AST nodes, identify vulnerable
+    code paths, and patch issues.
+
+    Delegate in strict sequence to your specialist subagents:
+
+    1. Delegate to `code_graph_architect`: Uses code-graph MCP to inspect AST nodes, call graphs, and
+    dead code to locate vulnerable entrypoints.
+
+    2. Delegate to `security_patch_engineer`: Applies targeted, least-intrusive patches to fix identified
+    security vulnerabilities and bugs.
+
+    3. Delegate to `regression_security_verifier`: Executes pytest suites, AST validation, and security
+    regression checks to ensure zero vulnerabilities remain.
+
+    Ensure all deliverables pass verification checks before declaring completion.'
+  tools:
+  - read
+  - grep
+  - glob
+  - subagent
+  mcp_servers:
+  - code-graph
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  budgets:
+    max_turns: 40
+    max_cost_usd: 3.0
+    timeout_seconds: 600
+    context_compaction_threshold_pct: 80
+subagents:
+- id: code_graph_architect
+  name: Codebase AST & Impact Auditor
+  role: Uses code-graph MCP to inspect AST nodes, call graphs, and dead code to locate vulnerable entrypoints.
+  model: reasoning
+  harness_models:
+    opencode: deepseek-v4.1-flash-free
+  system_prompt: Inspect the codebase using code-graph MCP tools. Map function call trees, data flow,
+    and identify vulnerability blast radius.
+  tools:
+  - read
+  - grep
+  - glob
+  mcp_servers:
+  - code-graph
+  permissions:
+    allow_shell: false
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 15
+- id: security_patch_engineer
+  name: Security Patch & Bugfix Engineer
+  role: Applies targeted, least-intrusive patches to fix identified security vulnerabilities and bugs.
+  model: coding
+  harness_models:
+    opencode: big-pickle
+  system_prompt: Implement precise security patches and bugfixes. Ensure no regressions in existing functionality.
+  tools:
+  - read
+  - write
+  - edit
+  - grep
+  - glob
+  mcp_servers:
+  - code-graph
+  permissions:
+    allow_shell: false
+    allow_write: true
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 20
+- id: regression_security_verifier
+  name: Regression & Static Audit Verifier
+  role: Executes pytest suites, AST validation, and security regression checks to ensure zero vulnerabilities
+    remain.
+  model: reasoning
+  harness_models:
+    opencode: deepseek-v4.1-flash-free
+  system_prompt: Run pytest -v, execute AST static checks, and verify that the security issue is resolved
+    with zero side effects.
+  tools:
+  - read
+  - bash
+  mcp_servers:
+  - code-graph
+  permissions:
+    allow_shell: true
+    allow_write: false
+    allow_network: false
+    allowed_commands: []
+    blocked_commands:
+    - rm -rf /
+    - git push --force
+  max_turns: 12
+skills: []
+commands: []
+hooks: []
+mcp_servers:
+- id: code-graph
+  description: Graph-based Code Intelligence & AST Search. Provides call graphs, semantic search, symbol
+    references, and architecture impact analysis.
+  transport: stdio
+  command: cgc
+  args:
+  - mcp
+  - start
+  url: null
+  env:
+    DEFAULT_DATABASE: falkordb
+    INDEX_SOURCE: 'true'
+topology:
+  pattern: generator-verifier-loop
+  enforcement_mode: dual
+  entry_node: root_orchestrator
+  edges:
+  - id: edge_orch_to_code_graph_architect
+    source: security_bugfix_triage_orchestrator
+    target: code_graph_architect
+    condition: 'Step 1: Ingest and analyze domain requirements'
+    order: 1
+    required: true
+    max_loops: 1
+  - id: edge_code_graph_architect_to_security_patch_engineer
+    source: code_graph_architect
+    target: security_patch_engineer
+    condition: 'Step 2: Handoff to Security Patch & Bugfix Engineer'
+    order: 2
+    required: true
+    max_loops: 1
+  - id: edge_security_patch_engineer_to_regression_security_verifier
+    source: security_patch_engineer
+    target: regression_security_verifier
+    condition: 'Step 3: Handoff to Regression & Static Audit Verifier'
+    order: 3
+    required: true
+    max_loops: 1
+  - id: edge_loopback_regression_security_verifier_to_security_patch_engineer
+    source: regression_security_verifier
+    target: security_patch_engineer
+    condition: 'Conditional: If verifier reports FAIL, loop back for revision (max 3 loops)'
+    order: 4
+    required: false
+    max_loops: 3
+visual_layout:
+  nodes: {}

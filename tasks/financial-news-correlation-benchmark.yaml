@@ -1,0 +1,35 @@
+api_version: harnessforge/v1
+kind: TaskSpec
+id: financial-news-correlation-benchmark
+name: Financial News Correlation & Anomaly Ingestion Benchmark
+category: bugfix
+difficulty: medium
+description: Evaluates correlation between price series and news events via sqlite & yahoofinance.
+prompt: Ingest historical prices for AAPL and NVDA from SQLite and correlate with news events.
+workspace_source: tasks/sample_repos/financial_analysis
+base_commit: null
+expected_subagents: []
+verifiers:
+- id: check_correlation_report_exists
+  name: Correlation Report Output Exists
+  type: file_exists
+  command: null
+  target_path: correlation_report.json
+  pattern: null
+  max_lines: null
+  weight: 2.0
+  required: true
+  timeout_seconds: 60
+- id: check_report_has_ticker_data
+  name: Report Contains Valid Ticker Metrics
+  type: file_contains_regex
+  command: null
+  target_path: correlation_report.json
+  pattern: '"(AAPL|NVDA)"'
+  max_lines: null
+  weight: 2.0
+  required: true
+  timeout_seconds: 60
+rubric: []
+tags: []
+env_vars: {}
