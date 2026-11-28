@@ -162,8 +162,11 @@ def test_validate_save_inspect_and_compile(tmp_path: Path):
 
     # Verify deployed files on disk
     assert (tmp_path / "GEMINI.md").exists()
-    assert (tmp_path / "mcp.json").exists()
-    mcp_json_content = json.loads((tmp_path / "mcp.json").read_text(encoding="utf-8"))
+    assert not (tmp_path / ".agent").exists()
+    plugin_dir = tmp_path / ".agents" / "plugins" / "lifecycle-test-system"
+    assert (plugin_dir / "plugin.json").exists()
+    assert (plugin_dir / "mcp_config.json").exists()
+    mcp_json_content = json.loads((plugin_dir / "mcp_config.json").read_text(encoding="utf-8"))
     assert "mcpServers" in mcp_json_content
     assert "sqlite" in mcp_json_content["mcpServers"]
 

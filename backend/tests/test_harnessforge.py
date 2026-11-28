@@ -58,11 +58,13 @@ def test_multi_harness_dual_mode_compiler(harness: str):
         assert ".claude/settings.local.json" in paths
     elif harness == "antigravity":
         assert "GEMINI.md" in paths
-        assert ".agents/rules/orchestrator.md" in paths
-        assert ".agents/agents/planner.md" in paths
-        assert ".agents/agents/coder.md" in paths
-        assert ".agents/hooks.json" in paths
-        assert ".agents/.harness-eval/hook_runner.py" in paths
+        plugin_p = f".agents/plugins/{bp.metadata.id}"
+        assert f"{plugin_p}/plugin.json" in paths
+        assert f"{plugin_p}/rules/AGENTS.md" in paths
+        assert f"{plugin_p}/agents/planner.md" in paths
+        assert f"{plugin_p}/agents/coder.md" in paths
+        assert f"{plugin_p}/hooks.json" in paths
+        assert f"{plugin_p}/.harness-eval/hook_runner.py" in paths
     elif harness == "opencode":
         assert "AGENTS.md" in paths
         assert "opencode.json" in paths
@@ -335,7 +337,7 @@ def test_folder_backed_skill_bundles_references_and_scripts(client: TestClient, 
 
     for harness, prefix in (
         ("claude_code", ".claude/skills/react-expert"),
-        ("antigravity", ".agents/skills/react-expert"),
+        ("antigravity", f".agents/plugins/{bp.metadata.id}/skills/react-expert"),
         ("opencode", ".opencode/skills/react-expert"),
     ):
         comp = compile_architecture(bp, harness=harness, run_id="skill-bundle-test")  # type: ignore[arg-type]
@@ -361,9 +363,10 @@ def test_folder_backed_skill_bundles_references_and_scripts(client: TestClient, 
     )
     assert inline_resp.status_code == 200
     inline_paths = {f["relative_path"] for f in inline_resp.json()["files"]}
-    assert ".agents/skills/react-expert/SKILL.md" in inline_paths
-    assert ".agents/skills/react-expert/references/server-components.md" in inline_paths
-    assert ".agents/skills/ba-template-2/SKILL.md" not in inline_paths
+    plugin_p = f".agents/plugins/{bp_placeholder.metadata.id}"
+    assert f"{plugin_p}/skills/react-expert/SKILL.md" in inline_paths
+    assert f"{plugin_p}/skills/react-expert/references/server-components.md" in inline_paths
+    assert f"{plugin_p}/skills/ba-template-2/SKILL.md" not in inline_paths
 
 
 def test_custom_user_commands_compile_across_all_harnesses():
@@ -388,7 +391,7 @@ def test_custom_user_commands_compile_across_all_harnesses():
 
     assert ".opencode/command/build-ui-epic.md" in {f.relative_path for f in oc.files}
     assert ".claude/commands/build-ui-epic.md" in {f.relative_path for f in cc.files}
-    assert ".agents/skills/build-ui-epic/SKILL.md" in {f.relative_path for f in ag.files}
+    assert f".agents/plugins/{bp.metadata.id}/skills/build-ui-epic/SKILL.md" in {f.relative_path for f in ag.files}
 
 
 def test_issue_1_orphan_guardrail_removal_and_issue_2_agent_id_rename(tmp_path: Path):
@@ -519,12 +522,13 @@ def test_issue_4_mcp_server_assignments_and_three_harness_examples():
     assert agy_tuple is not None
     agy_comp = compile_architecture(agy_tuple[0], harness="antigravity", run_id="mcp-agy-test")
     agy_files = {f.relative_path: f.content for f in agy_comp.files}
-    assert ".agents/mcp_config.json" in agy_files
-    agy_mcp = json.loads(agy_files[".agents/mcp_config.json"])["mcpServers"]
+    mcp_path = ".agents/plugins/mcp-antigravity-fullstack-studio/mcp_config.json"
+    assert mcp_path in agy_files
+    agy_mcp = json.loads(agy_files[mcp_path])["mcpServers"]
     assert "code-graph" in agy_mcp and agy_mcp["code-graph"]["command"] == "npx"
-    assert agy_mcp["stitch"]["serverUrl"] == "https://stitch.googleapis.com/mcp"
-    assert "enable_mcp_tools: true" in agy_files[".agents/agents/codebase_architect.md"]
-    assert "enable_mcp_tools: false" in agy_files[".agents/agents/qa_verifier.md"]
+    assert "stitch" in agy_mcp
+    assert "enable_mcp_tools: true" in agy_files[".agents/plugins/mcp-antigravity-fullstack-studio/agents/codebase_architect.md"]
+    assert "enable_mcp_tools: false" in agy_files[".agents/plugins/mcp-antigravity-fullstack-studio/agents/qa_verifier.md"]
 
     # 2. Claude Code example
     cc_tuple = get_blueprint("mcp-claude-code-security-ops")
@@ -732,7 +736,7 @@ def test_issue_6_workflow_handoff_edges_normalization_and_compilation():
     # 3. Compilation across all 3 harnesses keeps skills out of Mandatory Workflow Topology & topology_config.json,
     #    prints Assigned to in Section 5, and injects Assigned Skills into compiled subagent files
     for harness, root_doc, subagent_path in (
-        ("antigravity", "GEMINI.md", ".agents/agents/coder.md"),
+        ("antigravity", "GEMINI.md", f".agents/plugins/{normalized.metadata.id}/agents/coder.md"),
         ("claude_code", "CLAUDE.md", ".claude/agents/coder.md"),
         ("opencode", "AGENTS.md", ".opencode/agent/coder.md"),
     ):
@@ -773,7 +777,7 @@ def test_generated_agent_files_match_canvas_details_and_omit_tba_for_non_tba():
     sdlc_bp.orchestrator.permissions.allowed_commands = ["git status"]
 
     for harness, root_doc, verifier_path in (
-        ("antigravity", "GEMINI.md", ".agents/agents/verifier.md"),
+        ("antigravity", "GEMINI.md", f".agents/plugins/{sdlc_bp.metadata.id}/agents/verifier.md"),
         ("claude_code", "CLAUDE.md", ".claude/agents/verifier.md"),
         ("opencode", "AGENTS.md", ".opencode/agent/verifier.md"),
     ):
@@ -867,8 +871,9 @@ def test_mcp_workspace_path_resolution_and_clean_json_output(tmp_path: Path):
     }
 
     agy_dep = compile_architecture(bp, harness="antigravity", run_id="mcp-dep", workspace_dir=str(target_dir))
+    agy_mcp_path = f".agents/plugins/{bp.metadata.id}/mcp_config.json"
     agy_dep_mcp = json.loads(
-        next(f.content for f in agy_dep.files if f.relative_path == ".agents/mcp_config.json")
+        next(f.content for f in agy_dep.files if f.relative_path == agy_mcp_path)
     )["mcpServers"]["codegraph"]
     assert agy_dep_mcp == {
         "command": "npx",

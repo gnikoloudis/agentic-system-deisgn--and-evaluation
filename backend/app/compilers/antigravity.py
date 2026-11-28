@@ -1,13 +1,15 @@
 """Antigravity (AGY) Harness Adapter.
 
-Compiles AgentArchitecture into official Antigravity customization locations:
-- GEMINI.md (Workspace-root always-on rule with routing contract & define_subagent / invoke_subagent specs)
-- .agents/rules/orchestrator.md (and .agent/rules/orchestrator.md)
-- .agents/agents/<id>.md (and .agent/agents/<id>.md)
-- .agents/skills/<id>/SKILL.md (and .agent/skills/<id>/SKILL.md)
-- .agents/hooks.json (Official Antigravity lifecycle hooks format)
-- .agent/hooks/hooks.json
-- .harness-eval/*
+Compiles AgentArchitecture into official Antigravity pure plugin architecture:
+- GEMINI.md (Workspace-root always-on directory rule pointing to the active plugin)
+- .agents/plugins/<architecture_id>/
+  - plugin.json (Native Antigravity plugin manifest)
+  - mcp_config.json (Official Antigravity MCP servers configuration)
+  - hooks.json (Official Antigravity lifecycle telemetry & topology guard hooks)
+  - rules/AGENTS.md (Consolidated architecture rules & subagent routing contract)
+  - agents/<id>.md (Subagent specifications with YAML frontmatter)
+  - skills/<id>/SKILL.md (All blueprint and built-in workflow skills)
+- .harness-eval/* (Telemetry and topology state machine)
 """
 
 from __future__ import annotations
@@ -52,6 +54,9 @@ class AntigravityAdapter(HarnessAdapter):
         )
 
         blueprint.normalize_topology_edges()
+        arch_id = blueprint.metadata.id
+        plugin_prefix = f".agents/plugins/{arch_id}"
+
         any_shell_allowed = blueprint.orchestrator.permissions.allow_shell or any(
             sa.permissions.allow_shell for sa in blueprint.subagents
         )
@@ -102,32 +107,46 @@ class AntigravityAdapter(HarnessAdapter):
 
         agy_contract_body = self.render_routing_contract_markdown(blueprint) + "\n" + "\n".join(subagent_specs_lines)
 
-        # 1. GEMINI.md (Official workspace-root always-on rule, no frontmatter per rules.md spec)
+        # 1. Root GEMINI.md (Official workspace-root always-on directory rule)
+        root_gemini_content = (
+            f"# Architecture: {blueprint.metadata.name} (v{blueprint.metadata.version})\n\n"
+            f"> **Active Antigravity Plugin**: `{plugin_prefix}/`\n"
+            f"> **Plugin Manifest**: [`plugin.json`]({plugin_prefix}/plugin.json)\n\n"
+            f"{agy_contract_body}"
+        )
         files.append(
             CompiledFile(
                 relative_path="GEMINI.md",
-                content=agy_contract_body,
+                content=root_gemini_content,
                 description="Antigravity workspace-root GEMINI.md rule (always active for directory scope)",
             )
         )
 
-        # Also emit .agents/rules/orchestrator.md and .agent/rules/orchestrator.md for compatibility
+        # 2. Native Plugin Manifest (plugin.json)
+        plugin_manifest = {
+            "name": arch_id,
+            "version": blueprint.metadata.version or "1.0.0",
+            "description": blueprint.metadata.description or f"HarnessForge agentic system plugin for {blueprint.metadata.name}",
+            "author": "HarnessForge",
+        }
         files.append(
             CompiledFile(
-                relative_path=".agents/rules/orchestrator.md",
-                content=agy_contract_body,
-                description="Antigravity .agents/rules/orchestrator.md workspace rule",
-            )
-        )
-        files.append(
-            CompiledFile(
-                relative_path=".agent/rules/orchestrator.md",
-                content=agy_contract_body,
-                description="Antigravity .agent/rules/orchestrator.md workspace rule",
+                relative_path=f"{plugin_prefix}/plugin.json",
+                content=json.dumps(plugin_manifest, indent=2),
+                description=f"Antigravity native plugin manifest for `{arch_id}`",
             )
         )
 
-        # 2. Subagents -> .agents/agents/<id>.md and .agent/agents/<id>.md
+        # 3. Consolidated Plugin Rules (rules/AGENTS.md)
+        files.append(
+            CompiledFile(
+                relative_path=f"{plugin_prefix}/rules/AGENTS.md",
+                content=agy_contract_body,
+                description=f"Antigravity plugin consolidated rules for `{arch_id}`",
+            )
+        )
+
+        # 4. Subagents -> .agents/plugins/<arch_id>/agents/<id>.md
         for sa in blueprint.subagents:
             model_tier = self.resolve_agent_model(sa)
             sa_desc = json.dumps(f"{sa.name} — {sa.role}")
@@ -153,29 +172,19 @@ class AntigravityAdapter(HarnessAdapter):
             )
             files.append(
                 CompiledFile(
-                    relative_path=f".agents/agents/{sa.id}.md",
+                    relative_path=f"{plugin_prefix}/agents/{sa.id}.md",
                     content=subagent_md,
-                    description=f"Antigravity subagent definition for `{sa.id}` in .agents/agents/",
-                )
-            )
-            files.append(
-                CompiledFile(
-                    relative_path=f".agent/agents/{sa.id}.md",
-                    content=subagent_md,
-                    description=f"Antigravity subagent definition for `{sa.id}` in .agent/agents/",
+                    description=f"Antigravity subagent definition for `{sa.id}` in plugin agents/",
                 )
             )
 
-        # 3. Skills -> .agents/skills/<slug>/** and .agent/skills/<slug>/** (supports folder-backed references/scripts/assets)
-
+        # 5. Blueprint Skills -> .agents/plugins/<arch_id>/skills/<slug>/**
         for sk in blueprint.skills:
             slug = resolve_effective_skill_slug(sk)
-            bundle_new, _ = load_skill_bundle_files(sk, f".agents/skills/{slug}")
-            files.extend(bundle_new)
-            bundle_legacy, _ = load_skill_bundle_files(sk, f".agent/skills/{slug}")
-            files.extend(bundle_legacy)
+            bundle_files, _ = load_skill_bundle_files(sk, f"{plugin_prefix}/skills/{slug}")
+            files.extend(bundle_files)
 
-        # 3b. Explicit Custom User Commands -> .agents/skills/<cmd.id>/SKILL.md
+        # 5b. Explicit Custom User Commands -> .agents/plugins/<arch_id>/skills/<cmd.id>/SKILL.md
         import re as _re
 
         for cmd in blueprint.commands:
@@ -191,16 +200,9 @@ class AntigravityAdapter(HarnessAdapter):
             )
             files.append(
                 CompiledFile(
-                    relative_path=f".agents/skills/{c_slug}/SKILL.md",
+                    relative_path=f"{plugin_prefix}/skills/{c_slug}/SKILL.md",
                     content=cmd_skill_md,
-                    description=f"Antigravity user-defined command skill `/{c_slug}`",
-                )
-            )
-            files.append(
-                CompiledFile(
-                    relative_path=f".agent/skills/{c_slug}/SKILL.md",
-                    content=cmd_skill_md,
-                    description=f"Antigravity user-defined command skill `/{c_slug}` (legacy path)",
+                    description=f"Antigravity plugin command skill `/{c_slug}`",
                 )
             )
 
@@ -220,7 +222,7 @@ class AntigravityAdapter(HarnessAdapter):
                 "description": "Use this skill when the user asks to verify setup, check installed subagents, or confirm workspace configuration.",
                 "instructions": (
                     "Perform a 3-step installation health check using file read tools:\n"
-                    f"1. Confirm the active architecture `{blueprint.metadata.name}` (`{blueprint.metadata.id}`) in `GEMINI.md`.\n"
+                    f"1. Confirm the active architecture `{blueprint.metadata.name}` (`{blueprint.metadata.id}`) in `GEMINI.md` and plugin manifest in `{plugin_prefix}/plugin.json`.\n"
                     f"2. Confirm the configured orchestrator (`{blueprint.orchestrator.id}`), subagents ({subagent_list_str}), and skills ({skill_list_str}).\n"
                     "3. If an **External Reference Documentation Directory** section exists in `GEMINI.md`, verify its files are readable, then print a `SETUP VERIFIED: READY (Antigravity Mode)` checklist."
                 ),
@@ -273,22 +275,13 @@ class AntigravityAdapter(HarnessAdapter):
             )
             files.append(
                 CompiledFile(
-                    relative_path=f".agents/skills/{sk_dict['id']}/SKILL.md",
+                    relative_path=f"{plugin_prefix}/skills/{sk_dict['id']}/SKILL.md",
                     content=skill_md,
-                    description=f"Antigravity workspace skill `{sk_dict['id']}` in .agents/skills/",
-                )
-            )
-            files.append(
-                CompiledFile(
-                    relative_path=f".agent/skills/{sk_dict['id']}/SKILL.md",
-                    content=skill_md,
-                    description=f"Antigravity workspace skill `{sk_dict['id']}` in .agent/skills/",
+                    description=f"Antigravity plugin skill `{sk_dict['id']}`",
                 )
             )
 
-        # 4. Hooks -> Official .agents/hooks.json format
-        # Note: Antigravity runs hook commands with CWD set to `.agents/` (or `.agent/hooks/` for legacy),
-        # so we also emit `.agents/.harness-eval/` and use `../.harness-eval/hook_runner.py` or `.harness-eval/hook_runner.py` fallback.
+        # 6. Lifecycle Hooks -> .agents/plugins/<arch_id>/hooks.json
         py_exec = sys.executable.replace("\\", "/")
         official_hooks_json: Dict[str, Any] = {
             "harnessforge-telemetry": {
@@ -328,18 +321,18 @@ class AntigravityAdapter(HarnessAdapter):
         }
         files.append(
             CompiledFile(
-                relative_path=".agents/hooks.json",
+                relative_path=f"{plugin_prefix}/hooks.json",
                 content=json.dumps(official_hooks_json, indent=2),
-                description="Official Antigravity .agents/hooks.json lifecycle telemetry & topology guard hooks",
+                description=f"Antigravity plugin hooks.json for `{arch_id}`",
             )
         )
 
-        # 5. MCP Servers -> .agents/mcp_config.json and .agent/mcp.json (supports stdio, sse, http)
+        # 7. MCP Servers -> .agents/plugins/<arch_id>/mcp_config.json (official Antigravity location)
         if blueprint.mcp_servers:
             mcp_servers_map: Dict[str, Any] = {}
             for srv in blueprint.mcp_servers:
                 if srv.transport in ("sse", "http") and srv.url:
-                    entry: Dict[str, Any] = {"serverUrl": srv.url}
+                    entry: Dict[str, Any] = {"url": srv.url}
                     if srv.env:
                         entry["env"] = srv.env
                     mcp_servers_map[srv.id] = entry
@@ -354,37 +347,22 @@ class AntigravityAdapter(HarnessAdapter):
             mcp_payload = {"mcpServers": mcp_servers_map}
             files.append(
                 CompiledFile(
-                    relative_path=".agents/mcp_config.json",
+                    relative_path=f"{plugin_prefix}/mcp_config.json",
                     content=json.dumps(mcp_payload, indent=2),
-                    description="Antigravity MCP server configuration",
-                )
-            )
-            files.append(
-                CompiledFile(
-                    relative_path=".agent/mcp.json",
-                    content=json.dumps(mcp_payload, indent=2),
-                    description="Antigravity MCP server configuration",
-                )
-            )
-            files.append(
-                CompiledFile(
-                    relative_path="mcp.json",
-                    content=json.dumps(mcp_payload, indent=2),
-                    description="Root mcp.json configuration",
+                    description=f"Official Antigravity plugin MCP configuration for `{arch_id}`",
                 )
             )
 
-        # 6. Runtime topology state machine & telemetry emitter -> both `.harness-eval/*` (workspace root)
-        # AND `.agents/.harness-eval/*` (since Antigravity executes `.agents/hooks.json` with CWD = `.agents/`)
+        # 8. Runtime topology state machine & telemetry emitter -> `.harness-eval/*` (workspace root)
+        # AND `{plugin_prefix}/.harness-eval/*` so hook commands resolve regardless of CWD
         eval_files = generate_harness_eval_files(blueprint, "antigravity", run_id, server_url)
         files.extend(eval_files)
         for ef in eval_files:
             files.append(
                 CompiledFile(
-                    relative_path=f".agents/{ef.relative_path}",
+                    relative_path=f"{plugin_prefix}/{ef.relative_path}",
                     content=ef.content,
-                    description=f"{ef.description} (in .agents/ working directory)",
-                    executable=ef.executable,
+                    description=f"Plugin-local copy of {ef.relative_path}",
                 )
             )
 
@@ -401,8 +379,8 @@ class AntigravityAdapter(HarnessAdapter):
             ),
             interactive_launch_command=f"{settings.antigravity_binary}",
             notes=[
-                "Compiled always-on workspace rule & subagent orchestration contract into GEMINI.md and .agents/rules/orchestrator.md",
-                f"Generated {len(blueprint.subagents)} subagent definition(s) in .agents/agents/",
-                "Generated official .agents/hooks.json + skills (verify-setup, generate-tba-pack, evaluate-project)",
+                "Compiled always-on workspace rule & subagent orchestration contract into GEMINI.md",
+                f"Generated {len(blueprint.subagents)} subagent definition(s) under {plugin_prefix}/agents/",
+                f"Generated native plugin manifest in {plugin_prefix}/plugin.json + skills",
             ],
         )
